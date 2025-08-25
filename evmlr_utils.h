@@ -5,6 +5,7 @@
 // 2 Preliminaries
 // 2.2 Polynomial Ring
 
+int evmlr_utils_is_poly_bin(const nmod_poly_t poly);
 // R_q^* -> {True, False}. Takes a vector over Rq and evaluates to True
 // if all the coefficients of all its elements are in {0, 1}, and
 // to False otherwise.
@@ -14,7 +15,7 @@
  * @param len Length of the array.
  * @return 1 if all coefficients are in {0, 1}, 0 otherwise.
  */
-int evmlr_utils_is_bin(nmod_poly_t* poly, slong len);
+int evmlr_utils_is_bin(const nmod_poly_t* poly, slong len);
 
 // {0, ..., 2^{n} - 1} -> R_q. Maps an integer in the domain to the ring element
 /**
@@ -43,5 +44,16 @@ void evmlr_utils_gadget_matrix();
  * @return An integer sampled from the centered binomial distribution.
  */
 int evmlr_utils_binom_sample(int center);
+
+// we are sampling an element of Rq by sampling each of its coefficients independently according to B^*_η
+void evmlr_utils_binom_sample_ring(nmod_poly_t poly, int center);
+
+/**
+ * Generates a new random permutation of length `len` and stores it in the `perm` array.
+ * @param perm Pointer to an array where the permutation will be stored.
+ * @param len Length of the permutation array.
+ */
+void evmlr_new_perm(ulong* perm, size_t len);
+
 
 #endif // EVMLR_SHUFFLE_EVMLR_UTILS_H

@@ -1,7 +1,8 @@
 #include "evmlr_utils.h"
 #include "sys/random.h"
+#include "stdint.h"
 
-int _is_poly_bin(nmod_poly_t poly) {
+int evmlr_utils_is_poly_bin(const nmod_poly_t poly) {
     for (slong i = 0; i < poly->length; i++) {
         if (poly->coeffs[i] != 0 && poly->coeffs[i] != 1) {
             return 0; // Return false if any coefficient is not binary
@@ -10,9 +11,9 @@ int _is_poly_bin(nmod_poly_t poly) {
     return 1; // All coefficients are binary
 }
 
-int evmlr_utils_is_bin(nmod_poly_t* poly, slong len) {
+int evmlr_utils_is_bin(const nmod_poly_t* poly, slong len) {
     for (slong i = 0; i < len; i++) {
-        if (!_is_poly_bin(poly[i])) {
+        if (!evmlr_utils_is_poly_bin(poly[i])) {
             return 0; // Return false if any polynomial is not binary
         }
     }
@@ -55,4 +56,32 @@ int evmlr_utils_binom_sample(int center) {
     }
 
     return sample;
+}
+
+void evmlr_utils_binom_sample_ring(nmod_poly_t poly, int center) {
+    nmod_poly_fit_length(poly, MOD_N);
+    for (slong i = 0; i < MOD_N; i++) {
+        int sample = evmlr_utils_binom_sample(center);
+        // Ensure the coefficient is non-negative modulo MOD_Q
+        poly->coeffs[i] = (sample + MOD_Q) % MOD_Q;
+    }
+}
+
+void evmlr_new_perm(ulong* perm, size_t len) {
+    // Initialize the permutation array with the identity permutation
+    for (size_t i = 0; i < len; i++) {
+        perm[i] = i;
+    }
+
+    // Shuffle the array using Fisher-Yates algorithm
+    for (size_t i = len - 1; i > 0; i--) {
+        u_int8_t buff[4];
+        getrandom(buff, sizeof(u_int8_t) * 4, 0);
+        size_t j = *((uint32_t*)buff) % (i + 1); // Random index from 0 to i
+
+        // Swap perm[i] and perm[j]
+        ulong temp = perm[i];
+        perm[i] = perm[j];
+        perm[j] = temp;
+    }
 }
