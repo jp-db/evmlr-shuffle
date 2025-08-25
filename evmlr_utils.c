@@ -4,7 +4,8 @@
 
 int evmlr_utils_is_poly_bin(const nmod_poly_t poly) {
     for (slong i = 0; i < poly->length; i++) {
-        if (poly->coeffs[i] != 0 && poly->coeffs[i] != 1) {
+        ulong coeff = nmod_poly_get_coeff_ui(poly, i);
+        if (coeff != 0 && coeff != 1) {
             return 0; // Return false if any coefficient is not binary
         }
     }
@@ -35,7 +36,7 @@ void evmlr_utils_int_to_bin(nmod_poly_t poly, ulong n) {
 
     // Fill the polynomial coefficients with the binary representation
     for (slong i = 0; i < degree; i++) {
-        poly->coeffs[i] = (n & 1); // Get the least significant bit
+        nmod_poly_set_coeff_ui(poly, i, n & 1); // Get the least significant bit
         n >>= 1; // Shift right to process the next bit
     }
 }
@@ -59,11 +60,12 @@ int evmlr_utils_binom_sample(int center) {
 }
 
 void evmlr_utils_binom_sample_ring(nmod_poly_t poly, int center) {
-    nmod_poly_fit_length(poly, MOD_N);
-    for (slong i = 0; i < MOD_N; i++) {
+    nmod_poly_fit_length(poly, DEGREE_N);
+    for (slong i = 0; i < DEGREE_N; i++) {
         int sample = evmlr_utils_binom_sample(center);
         // Ensure the coefficient is non-negative modulo MOD_Q
-        poly->coeffs[i] = (sample + MOD_Q) % MOD_Q;
+        ulong coeff = (sample + MOD_Q) % MOD_Q;
+        nmod_poly_set_coeff_ui(poly, i, coeff);
     }
 }
 

@@ -3,6 +3,11 @@
 #include "evmlr_params.h"
 
 typedef struct {
+    nmod_poly_t cyclo_poly; // x^N + 1
+} evmlr_enc_ctx_struct;
+typedef evmlr_enc_ctx_struct evmlr_enc_ctx_t[1];
+
+typedef struct {
     nmod_poly_t s[K_LWE];
 } evmlr_enc_sk_struct;
 typedef evmlr_enc_sk_struct evmlr_enc_sk_t[1];
@@ -30,15 +35,18 @@ typedef struct {
 } evmlr_enc_cipher_struct;
 typedef evmlr_enc_cipher_struct evmlr_enc_cipher_t[1];
 
-void evmlr_enc_keypair_gen(evmlr_enc_keypair_t keypair, flint_rand_t state);
+void evmlr_enc_ctx_init(evmlr_enc_ctx_t ctx);
 
-void evmlr_enc_clear_keypair(evmlr_enc_keypair_t keypair);
+void evmlr_enc_ctx_clear(evmlr_enc_ctx_t ctx);
 
-void evmlr_enc(evmlr_enc_cipher_t cipher, const nmod_poly_t msg, const evmlr_enc_pk_t pk
-);
+void evmlr_enc_keypair_gen(evmlr_enc_keypair_t keypair, flint_rand_t state, const evmlr_enc_ctx_t ctx);
 
-void evmlr_dec(nmod_poly_t msg, const evmlr_enc_cipher_t cipher, const evmlr_enc_sk_t sk);
+void evmlr_enc_keypair_clear(evmlr_enc_keypair_t keypair);
 
-void evmlr_enc_clear_cipher(evmlr_enc_cipher_t cipher);
+void evmlr_enc(evmlr_enc_cipher_t cipher, const nmod_poly_t msg, const evmlr_enc_pk_t pk, const evmlr_enc_ctx_t ctx);
+
+void evmlr_dec(nmod_poly_t msg, const evmlr_enc_cipher_t cipher, const evmlr_enc_sk_t sk, const evmlr_enc_ctx_t ctx);
+
+void evmlr_enc_cipher_clear(evmlr_enc_cipher_t cipher);
 
 #endif
