@@ -5,22 +5,30 @@ UTILS = evmlr_utils.c
 BENCH = bench.c cpucycles.c
 TEST = test.c
 
+evmlr_hpke_EXTRA = evmlr_otse.o evmlr_mlpke.o
+
 .PHONY: all clean encrypt commit
 
-all: encrypt commit
+all: mlpke commit otse hpke
 
-encrypt: evmlr_enc.o
-	./evmlr_enc.o
+mlpke: evmlr_mlpke.bin
+	./$<
 
-commit: evmlr_commit.o
-	./evmlr_commit.o
+commit: evmlr_commit.bin
+	./$<
 
-otse: evmlr_otse.o
-	./evmlr_otse.o
+otse: evmlr_otse.bin
+	./$<
 
-%.o: %.c $(UTILS) $(TEST) $(BENCH)
-	$(CC) $(CFLAGS) -DMAIN $^ -o $@ $(LIBS)
+hpke: $(evmlr_hpke_EXTRA) evmlr_hpke.bin
+	./$(word $(words $^), $^)
+
+%.bin: %.c $(UTILS) $(TEST) $(BENCH)
+	$(CC) $(CFLAGS) -DMAIN $^ $($*_EXTRA) -o $@ $(LIBS)
 	chmod +x $@ # make executable
 
+%.o: %.c $(UTILS)
+	$(CC) $(CFLAGS) -c $< -o $@ $(LIBS)
+
 clean:
-	rm -f *.o
+	rm -f *.o *.so *.bin

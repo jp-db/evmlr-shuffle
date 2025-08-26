@@ -1,4 +1,4 @@
-#include "evmlr_enc.h"
+#include "evmlr_mlpke.h"
 #include "evmlr_utils.h"
 #ifdef MAIN
 #include "test.h"
@@ -6,18 +6,18 @@
 #endif
 
 
-void evmlr_enc_ctx_init(evmlr_enc_ctx_t ctx) {
+void evmlr_mlpke_ctx_init(evmlr_mlpke_ctx_t ctx) {
     nmod_poly_init(ctx->cyclo_poly, MOD_Q);
     // Initialize cyclotomic polynomial x^N + 1
     nmod_poly_set_coeff_ui(ctx->cyclo_poly, DEGREE_N, 1);
     nmod_poly_set_coeff_ui(ctx->cyclo_poly, 0, 1);
 }
 
-void evmlr_enc_ctx_clear(evmlr_enc_ctx_t ctx) {
+void evmlr_mlpke_ctx_clear(evmlr_mlpke_ctx_t ctx) {
     nmod_poly_clear(ctx->cyclo_poly);
 }
 
-void evmlr_enc_keypair_gen(evmlr_enc_keypair_t keypair, flint_rand_t state, const evmlr_enc_ctx_t ctx) {
+void evmlr_mlpke_keypair_gen(evmlr_mlpke_keypair_t keypair, flint_rand_t state, const evmlr_mlpke_ctx_t ctx) {
     // Generate secret key s and error e with coefficients from B_eta
     nmod_poly_t e[K_LWE];
     for (size_t i = 0; i < K_LWE; i++) {
@@ -54,7 +54,7 @@ void evmlr_enc_keypair_gen(evmlr_enc_keypair_t keypair, flint_rand_t state, cons
     }
 }
 
-void evmlr_enc_keypair_clear(evmlr_enc_keypair_t keypair) {
+void evmlr_mlpke_keypair_clear(evmlr_mlpke_keypair_t keypair) {
     // Clear secret key
     for (size_t i = 0; i < K_LWE; i++) {
         nmod_poly_clear(keypair->sk->s[i]);
@@ -68,7 +68,7 @@ void evmlr_enc_keypair_clear(evmlr_enc_keypair_t keypair) {
     }
 }
 
-void evmlr_enc(evmlr_enc_cipher_t cipher, const nmod_poly_t msg, const evmlr_enc_pk_t pk, const evmlr_enc_ctx_t ctx) {
+void evmlr_mlpke_enc(evmlr_mlpke_cipher_t cipher, const nmod_poly_t msg, const evmlr_mlpke_pk_t pk, const evmlr_mlpke_ctx_t ctx) {
     // assert(evmlr_utils_is_poly_bin(msg));
     nmod_poly_t r[K_LWE], e2[K_LWE], e3, tmp, msg_scaled;
     // Sample r and e2 from B^{k_lwe}_{eta}
@@ -119,7 +119,7 @@ void evmlr_enc(evmlr_enc_cipher_t cipher, const nmod_poly_t msg, const evmlr_enc
     nmod_poly_clear(e3);
 }
 
-void evmlr_dec(nmod_poly_t msg, const evmlr_enc_cipher_t cipher, const evmlr_enc_sk_t sk, const evmlr_enc_ctx_t ctx) {
+void evmlr_mlpke_dec(nmod_poly_t msg, const evmlr_mlpke_cipher_t cipher, const evmlr_mlpke_sk_t sk, const evmlr_mlpke_ctx_t ctx) {
     // \tilde{m} = v - u^T s
     nmod_poly_t m_tilde, tmp;
     nmod_poly_init(m_tilde, MOD_Q);
@@ -146,7 +146,7 @@ void evmlr_dec(nmod_poly_t msg, const evmlr_enc_cipher_t cipher, const evmlr_enc
     nmod_poly_clear(tmp);
 }
 
-void evmlr_enc_cipher_clear(evmlr_enc_cipher_t cipher) {
+void evmlr_mlpke_cipher_clear(evmlr_mlpke_cipher_t cipher) {
     for (size_t i = 0; i < K_LWE; i++) {
         nmod_poly_clear(cipher->uT[i]);
     }
@@ -154,10 +154,10 @@ void evmlr_enc_cipher_clear(evmlr_enc_cipher_t cipher) {
 }
 
 #ifdef MAIN
-static void test(flint_rand_t rand, evmlr_enc_ctx_t ctx) {
-    evmlr_enc_keypair_t keypair;
-    evmlr_enc_cipher_t cipher;
-    evmlr_enc_keypair_gen(keypair, rand, ctx);
+static void test(flint_rand_t rand, evmlr_mlpke_ctx_t ctx) {
+    evmlr_mlpke_keypair_t keypair;
+    evmlr_mlpke_cipher_t cipher;
+    evmlr_mlpke_keypair_gen(keypair, rand, ctx);
 
     nmod_poly_t msg, decrypted_msg;
     nmod_poly_init(msg, MOD_Q);
@@ -168,48 +168,48 @@ static void test(flint_rand_t rand, evmlr_enc_ctx_t ctx) {
     evmlr_utils_int_to_bin(msg, msg_val[0]);
 
     TEST_BEGIN("encryption and decryption are consistent") {
-        evmlr_enc(cipher, msg, keypair->pk, ctx);
-        evmlr_dec(decrypted_msg, cipher, keypair->sk, ctx);
+        evmlr_mlpke_enc(cipher, msg, keypair->pk, ctx);
+        evmlr_mlpke_dec(decrypted_msg, cipher, keypair->sk, ctx);
         TEST_ASSERT(nmod_poly_equal(msg, decrypted_msg) == 1, end)
     } TEST_END;
 
     // clear memory
     end:
-        evmlr_enc_cipher_clear(cipher);
-        evmlr_enc_keypair_clear(keypair);
+        evmlr_mlpke_cipher_clear(cipher);
+        evmlr_mlpke_keypair_clear(keypair);
         nmod_poly_clear(msg);
         nmod_poly_clear(decrypted_msg);
 }
 
-static void bench(flint_rand_t rand, evmlr_enc_ctx_t ctx) {
-    evmlr_enc_keypair_t keypair;
-    evmlr_enc_keypair_gen(keypair, rand, ctx);
+static void bench(flint_rand_t rand, evmlr_mlpke_ctx_t ctx) {
+    evmlr_mlpke_keypair_t keypair;
+    evmlr_mlpke_keypair_gen(keypair, rand, ctx);
 
     nmod_poly_t msg, decrypted_msg;
     nmod_poly_init(msg, MOD_Q);
     nmod_poly_init(decrypted_msg, MOD_Q);
 
-    evmlr_enc_cipher_t cipher;
+    evmlr_mlpke_cipher_t cipher;
 
-    BENCH_BEGIN("evmlr_enc_keypair_gen") {
-        BENCH_ADD(evmlr_enc_keypair_gen(keypair, rand, ctx))
+    BENCH_BEGIN("evmlr_mlpke_keypair_gen") {
+        BENCH_ADD(evmlr_mlpke_keypair_gen(keypair, rand, ctx))
     } BENCH_END;
 
     ulong msg_val[1];
     getrandom(msg_val, sizeof(ulong), 0);
     evmlr_utils_int_to_bin(msg, msg_val[0]);
 
-    BENCH_BEGIN("evmlr_enc") {
-        BENCH_ADD(evmlr_enc(cipher, msg, keypair->pk, ctx))
+    BENCH_BEGIN("evmlr_mlpke_enc") {
+        BENCH_ADD(evmlr_mlpke_enc(cipher, msg, keypair->pk, ctx))
     } BENCH_END;
 
-    BENCH_BEGIN("evmlr_dec") {
-        BENCH_ADD(evmlr_dec(decrypted_msg, cipher, keypair->sk, ctx))
+    BENCH_BEGIN("evmlr_mlpke_dec") {
+        BENCH_ADD(evmlr_mlpke_dec(decrypted_msg, cipher, keypair->sk, ctx))
     } BENCH_END;
 
     // clear memory
-    evmlr_enc_cipher_clear(cipher);
-    evmlr_enc_keypair_clear(keypair);
+    evmlr_mlpke_cipher_clear(cipher);
+    evmlr_mlpke_keypair_clear(keypair);
     nmod_poly_clear(msg);
     nmod_poly_clear(decrypted_msg);
 }
@@ -222,13 +222,13 @@ int main() {
     getrandom(seed, sizeof(ulong)*2, 0);
     flint_rand_set_seed(state, seed[0], seed[1]);
 
-    evmlr_enc_ctx_t ctx;
-    evmlr_enc_ctx_init(ctx);
+    evmlr_mlpke_ctx_t ctx;
+    evmlr_mlpke_ctx_init(ctx);
 
     test(state, ctx);
     bench(state, ctx);
 
-    evmlr_enc_ctx_clear(ctx);
+    evmlr_mlpke_ctx_clear(ctx);
     flint_rand_clear(state);
 
     return 0;

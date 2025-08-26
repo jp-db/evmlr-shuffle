@@ -34,6 +34,4 @@ void evmlr_otse_decrypt(nmod_poly_t m[M_LEN], const evmlr_otse_ciphertext_t ct, 
 
 void evmlr_otse_ciphertext_clear(evmlr_otse_ciphertext_t ct);
 
-
-
 #endif //EVMLR_SHUFFLE_EVMLR_OTSE_H
