@@ -15,6 +15,9 @@ encrypt: evmlr_enc.o
 commit: evmlr_commit.o
 	./evmlr_commit.o
 
+otse: evmlr_otse.o
+	./evmlr_otse.o
+
 %.o: %.c $(UTILS) $(TEST) $(BENCH)
 	$(CC) $(CFLAGS) -DMAIN $^ -o $@ $(LIBS)
 	chmod +x $@ # make executable

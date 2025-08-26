@@ -1,6 +1,7 @@
 #ifndef EVMLR_SHUFFLE_EVMLR_UTILS_H
 #define EVMLR_SHUFFLE_EVMLR_UTILS_H
 #include "evmlr_params.h"
+#include "flint/fmpz_poly.h" // for signed coefficients
 
 // 2 Preliminaries
 // 2.2 Polynomial Ring
@@ -26,12 +27,26 @@ int evmlr_utils_is_bin(const nmod_poly_t* poly, slong len);
  */
 void evmlr_utils_int_to_bin(nmod_poly_t poly, ulong n);
 
-// R_q^N \times \N -> (R_q^N)^*. Binary decomposition of (a vector of) ring elements
-// TODO
-void evmlr_utils_ring_to_bin(nmod_poly_t* poly, ulong n, slong len);
+// R_q^N \times \N -> (R_q^N)^*. Bina7ry decomposition of (a vector of) ring elements
+/**
+ * Decomposes a vector of polynomials into b binary polynomial vectors.
+ * @param len Length of the input array.
+ * @param bits Number of bits for the binary decomposition.
+ * @param bin_vec Output array of (nmod_poly_t *) vectors, size b.
+ * @param ring_vec Input array of polynomials to be decomposed.
+ * @param mod Modulus for the polynomials.
+ */
+void evmlr_utils_ring_to_bin(slong len, int bits, nmod_poly_t bin_vec[bits][len], const fmpz_poly_t ring_vec[len], ulong mod);
 
-// TODO
-void evmlr_utils_stack();
+/**
+ * Stacks the binary vectors into a single vector.
+ * @param len length of each binary vector
+ * @param bits number of binary vectors
+ * @param stack output stacked vector of length bits * len
+ * @param bin_vec input binary vectors of size bits, each of length len
+ * @param mod modulus for the polynomials
+ */
+void evmlr_utils_stack(slong len, int bits, nmod_poly_t stack[bits * len], const nmod_poly_t bin_vec[bits][len], ulong mod);
 
 // TODO
 void evmlr_utils_gadget_matrix();
@@ -47,6 +62,8 @@ int evmlr_utils_binom_sample(int center);
 
 // we are sampling an element of Rq by sampling each of its coefficients independently according to B^*_η
 void evmlr_utils_binom_sample_ring(nmod_poly_t poly, int center);
+
+void evmlr_utils_sample_binary_poly(nmod_poly_t poly, slong degree, flint_rand_t state);
 
 /**
  * Generates a new random permutation of length `len` and stores it in the `perm` array.

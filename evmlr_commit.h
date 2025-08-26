@@ -1,7 +1,6 @@
 #ifndef EVMLR_SHUFFLE_EVMLR_COMMIT_H
 #define EVMLR_SHUFFLE_EVMLR_COMMIT_H
 #include "evmlr_params.h"
-#define M_LEN 1
 
 // B := \sqrt{nL + n 2 K_SIS ETA^2}
 // public_parameters pp := (K_SIS, M_LEN, ETA, B, A_1, A_2)
