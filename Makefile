@@ -1,33 +1,28 @@
 CC = gcc
 CFLAGS = -O3 -march=native -mtune=native -Wall -ggdb -pthread
 LIBS = -lflint -lgmp
-UTILS = evmlr_utils.c
+PREFIX = evmlr
+UTILS = $(PREFIX)_utils.c
 BENCH = bench.c cpucycles.c
 TEST = test.c
+TARGETS = mlpke commit otse hpke
 
-evmlr_hpke_EXTRA = evmlr_otse.o evmlr_mlpke.o
+$(PREFIX)_hpke_EXTRA = $(PREFIX)_otse.o $(PREFIX)_mlpke.o
 
-.PHONY: all clean encrypt commit
+.PHONY: all clean $(TARGETS)
 
-all: mlpke commit otse hpke
+all: $(TARGETS)
 
-mlpke: evmlr_mlpke.bin
-	./$<
+$(TARGETS): %: $(PREFIX)_%.bin
+	./$(word $(words $^), $^) # run last target (the binary)
 
-commit: evmlr_commit.bin
-	./$<
+.SECONDEXPANSION: # makefile magic to expand and get the extra dependencies
 
-otse: evmlr_otse.bin
-	./$<
-
-hpke: $(evmlr_hpke_EXTRA) evmlr_hpke.bin
-	./$(word $(words $^), $^)
-
-%.bin: %.c $(UTILS) $(TEST) $(BENCH)
-	$(CC) $(CFLAGS) -DMAIN $^ $($*_EXTRA) -o $@ $(LIBS)
+%.bin: $$($$*_EXTRA) %.c $(UTILS) $(TEST) $(BENCH)
+	$(CC) $(CFLAGS) -DMAIN $^ -o $@ $(LIBS)
 	chmod +x $@ # make executable
 
-%.o: %.c $(UTILS)
+%.o: $$($$*_EXTRA) %.c $(UTILS)
 	$(CC) $(CFLAGS) -c $< -o $@ $(LIBS)
 
 clean:
