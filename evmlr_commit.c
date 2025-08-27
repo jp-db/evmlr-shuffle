@@ -10,7 +10,7 @@ ulong compute_b() {
     return (DEGREE_N * M_LEN) + (DEGREE_N * 2 * K_SIS * ETA * ETA);
 }
 
-void evmlr_commit_scheme_init(evmlr_commit_ctx_t ctx, flint_rand_t state) {
+void evmlr_commit_ctx_init(evmlr_commit_ctx_t ctx, flint_rand_t state) {
     ctx->b_sqr = compute_b();
 
     // A_1 \sample R_q^{K_SIS x M_LEN}
@@ -32,7 +32,7 @@ void evmlr_commit_scheme_init(evmlr_commit_ctx_t ctx, flint_rand_t state) {
     nmod_poly_set_coeff_ui(ctx->cyclo_poly, 0, 1);
 }
 
-void evmlr_commit_scheme_clear(evmlr_commit_ctx_t ctx) {
+void evmlr_commit_ctx_clear(evmlr_commit_ctx_t ctx) {
     // Clear A_1
     for (size_t i = 0; i < K_SIS; i++) {
         for (size_t j = 0; j < M_LEN; j++) {
@@ -199,12 +199,12 @@ int main() {
     flint_rand_set_seed(state, seed[0], seed[1]);
 
     evmlr_commit_ctx_t ctx;
-    evmlr_commit_scheme_init(ctx, state);
+    evmlr_commit_ctx_init(ctx, state);
 
     test(ctx);
     bench(ctx);
 
-    evmlr_commit_scheme_clear(ctx);
+    evmlr_commit_ctx_clear(ctx);
     flint_rand_clear(state);
     return 0;
 }

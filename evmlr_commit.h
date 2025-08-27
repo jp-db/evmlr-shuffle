@@ -18,9 +18,9 @@ typedef struct {
 } evmlr_commit_struct;
 typedef evmlr_commit_struct evmlr_commit_t[1];
 
-void evmlr_commit_scheme_init(evmlr_commit_ctx_t ctx, flint_rand_t state);
+void evmlr_commit_ctx_init(evmlr_commit_ctx_t ctx, flint_rand_t state);
 
-void evmlr_commit_scheme_clear(evmlr_commit_ctx_t ctx);
+void evmlr_commit_ctx_clear(evmlr_commit_ctx_t ctx);
 
 // sample from binom r \sample B^{2K_SIS}_eta
 void evmlr_sample_r(nmod_poly_t r[2*K_SIS]);
