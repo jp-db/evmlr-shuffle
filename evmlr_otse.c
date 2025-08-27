@@ -280,7 +280,9 @@ void test(flint_rand_t rand, evmlr_otse_ctx_t ctx) {
 
 void bench(flint_rand_t rand, evmlr_otse_ctx_t ctx) {
     evmlr_otse_key_t key;
-    evmlr_otse_keygen(key, rand);
+    BENCH_BEGIN("evmlr_otse_keygen") {
+        BENCH_ADD(evmlr_otse_keygen(key, rand))
+    } BENCH_END;
 
     nmod_poly_t msg[M_LEN];
     for (int i = 0; i < M_LEN; i++) {
