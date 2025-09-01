@@ -27,7 +27,7 @@ typedef struct {
 
 typedef evmlr_shuffle_pp_struct evmlr_shuffle_pp_t[1];
 
-void evmlr_shuffle_ctx_init(evmlr_shuffle_ctx_t ctx, flint_rand_t state);
+void evmlr_shuffle_ctx_init(evmlr_shuffle_ctx_t ctx, ulong L, flint_rand_t state);
 
 void evmlr_shuffle_ctx_clear(evmlr_shuffle_ctx_t ctx);
 
