@@ -12,6 +12,7 @@
 #define ETA 2
 #define ZETA 6
 #define M_LEN 1
+#define LOG_Q_CEIL 9
 
 #define EVMLR_SHUFFLE_EVMLR_PARAMS_H
 

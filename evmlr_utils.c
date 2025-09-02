@@ -96,8 +96,8 @@ void evmlr_utils_binom_sample_ring(nmod_poly_t poly, int center) {
         for (int j = 0; j < center; j++) {
             uint64_t current_word = buff[word_idx];
 
-            int a = (current_word >> (bit_pair_idx * 2)) & 1;
-            int b = (current_word >> (bit_pair_idx * 2 + 1)) & 1;
+            uint8_t a = (current_word >> (bit_pair_idx * 2)) & 1;
+            uint8_t b = (current_word >> (bit_pair_idx * 2 + 1)) & 1;
             sample += a - b;
 
             // Advance our position in the buffer.
@@ -134,7 +134,7 @@ void evmlr_new_perm(ulong* perm, size_t len) {
     }
 }
 
-void evmlr_utils_ring_to_bin(slong len, int bits, nmod_poly_t bin_vec[bits][len], const fmpz_poly_t ring_vec[len], ulong mod) {
+void evmlr_utils_ring_to_bin(size_t len, int bits, nmod_poly_t bin_vec[bits][len], const fmpz_poly_t ring_vec[len], ulong mod) {
     fmpz_t coeff, two_pow_b_minus_1, two_pow_b;
     fmpz_init(coeff);
     fmpz_init(two_pow_b_minus_1);
@@ -147,7 +147,7 @@ void evmlr_utils_ring_to_bin(slong len, int bits, nmod_poly_t bin_vec[bits][len]
     fmpz_mul_2exp(two_pow_b_minus_1, two_pow_b_minus_1, bits - 1); // 2^(b-1)
 
     for (int b = 0; b < bits; b++) {
-        for (slong i = 0; i < len; i++) {
+        for (size_t i = 0; i < len; i++) {
             nmod_poly_init(bin_vec[b][i], mod);
             nmod_poly_zero(bin_vec[b][i]);
         }
@@ -178,9 +178,9 @@ void evmlr_utils_ring_to_bin(slong len, int bits, nmod_poly_t bin_vec[bits][len]
     fmpz_clear(two_pow_b);
 }
 
-void evmlr_utils_stack(slong len, int bits, nmod_poly_t stack[bits * len], const nmod_poly_t bin_vec[bits][len], ulong mod) {
+void evmlr_utils_stack(size_t len, int bits, nmod_poly_t stack[bits * len], const nmod_poly_t bin_vec[bits][len], ulong mod) {
     for (int b = 0; b < bits; b++) {
-        for (slong i = 0; i < len; i++) {
+        for (size_t i = 0; i < len; i++) {
             nmod_poly_init(stack[b * len + i], mod);
             nmod_poly_set(stack[b * len + i], bin_vec[b][i]);
         }

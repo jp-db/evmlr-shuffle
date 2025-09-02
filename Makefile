@@ -5,9 +5,10 @@ PREFIX = evmlr
 UTILS = $(PREFIX)_utils.c
 BENCH = bench.c cpucycles.c
 TEST = test.c
-TARGETS = mlpke commit otse hpke # shuffle
+TARGETS = mlpke commit otse hpke shuffle
 
 $(PREFIX)_hpke_EXTRA = $(PREFIX)_otse.o $(PREFIX)_mlpke.o
+$(PREFIX)_shuffle_EXTRA = $(PREFIX)_hpke.o $(PREFIX)_commit.o $(PREFIX)_mlpke.o $(PREFIX)_otse.o
 
 .PHONY: all clean $(TARGETS)
 

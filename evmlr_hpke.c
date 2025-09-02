@@ -4,9 +4,9 @@
 #include "bench.h"
 #endif
 
-void evmlr_hpke_ctx_init(evmlr_hpke_ctx_t ctx, flint_rand_t state, size_t L) {
+void evmlr_hpke_ctx_init(evmlr_hpke_ctx_t ctx, size_t L, flint_rand_t state) {
     evmlr_mlpke_ctx_init(ctx->enc_ctx);
-    evmlr_otse_ctx_init(ctx->otse_ctx, state, L);
+    evmlr_otse_ctx_init(ctx->otse_ctx, L, state);
 }
 
 void evmlr_hpke_ctx_clear(evmlr_hpke_ctx_t ctx) {
@@ -127,7 +127,7 @@ int main() {
     flint_rand_set_seed(state, seed[0], seed[1]);
 
     evmlr_hpke_ctx_t ctx;
-    evmlr_hpke_ctx_init(ctx, state, M_LEN);
+    evmlr_hpke_ctx_init(ctx, M_LEN, state);
 
     test(state, ctx);
     bench(state, ctx);

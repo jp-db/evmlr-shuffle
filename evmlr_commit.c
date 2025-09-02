@@ -50,7 +50,7 @@ void evmlr_commit_ctx_clear(evmlr_commit_ctx_t ctx) {
     }
 }
 
-void evmlr_sample_r(nmod_poly_t r[2*K_SIS]) {
+void evmlr_commit_sample_r(nmod_poly_t r[2*K_SIS]) {
     for (ulong i = 0; i < 2 * K_SIS; i++) {
         nmod_poly_init(r[i], MOD_Q);
         evmlr_utils_binom_sample_ring(r[i], ETA);
@@ -143,7 +143,7 @@ void test(evmlr_commit_ctx_t ctx) {
         evmlr_utils_int_to_bin(msg[i], msg_value[i]);
     }
     // Sample r
-    evmlr_sample_r(r);
+    evmlr_commit_sample_r(r);
 
 
     TEST_BEGIN("commitments can be created and verified") {
@@ -173,7 +173,7 @@ void bench(evmlr_commit_ctx_t ctx) {
         evmlr_utils_int_to_bin(msg[i], msg_value[i]);
     }
     // Sample r
-    evmlr_sample_r(r);
+    evmlr_commit_sample_r(r);
 
     BENCH_BEGIN("evmlr_commit") {
         BENCH_ADD(evmlr_commit(com, ctx, msg, r))

@@ -21,7 +21,7 @@ typedef struct {
 } evmlr_hpke_cipher_struct;
 typedef evmlr_hpke_cipher_struct evmlr_hpke_cipher_t[1];
 
-void evmlr_hpke_ctx_init(evmlr_hpke_ctx_t ctx, flint_rand_t state, size_t L);
+void evmlr_hpke_ctx_init(evmlr_hpke_ctx_t ctx, size_t L, flint_rand_t state);
 
 void evmlr_hpke_ctx_clear(evmlr_hpke_ctx_t ctx);
 

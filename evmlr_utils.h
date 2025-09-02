@@ -36,7 +36,7 @@ void evmlr_utils_int_to_bin(nmod_poly_t poly, ulong n);
  * @param ring_vec Input array of polynomials to be decomposed.
  * @param mod Modulus for the polynomials.
  */
-void evmlr_utils_ring_to_bin(slong len, int bits, nmod_poly_t bin_vec[bits][len], const fmpz_poly_t ring_vec[len], ulong mod);
+void evmlr_utils_ring_to_bin(size_t len, int bits, nmod_poly_t bin_vec[bits][len], const fmpz_poly_t ring_vec[len], ulong mod);
 
 /**
  * Stacks the binary vectors into a single vector.
@@ -46,7 +46,7 @@ void evmlr_utils_ring_to_bin(slong len, int bits, nmod_poly_t bin_vec[bits][len]
  * @param bin_vec input binary vectors of size bits, each of length len
  * @param mod modulus for the polynomials
  */
-void evmlr_utils_stack(slong len, int bits, nmod_poly_t stack[bits * len], const nmod_poly_t bin_vec[bits][len], ulong mod);
+void evmlr_utils_stack(size_t len, int bits, nmod_poly_t stack[bits * len], const nmod_poly_t bin_vec[bits][len], ulong mod);
 
 // TODO
 void evmlr_utils_gadget_matrix();

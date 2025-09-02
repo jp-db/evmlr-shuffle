@@ -9,7 +9,7 @@
 
 void calc_a(nmod_poly_t a[], const evmlr_otse_key_t key, const evmlr_otse_ctx_t ctx);
 
-void evmlr_otse_ctx_init(evmlr_otse_ctx_t ctx, flint_rand_t state, size_t L) {
+void evmlr_otse_ctx_init(evmlr_otse_ctx_t ctx, size_t L, flint_rand_t state) {
     uint alloc; // prevent compiler warning
     ctx->L = L;
     // H \sample R_{2^ZETA}^{(K_LWE + L) x K_LWR}
@@ -173,23 +173,20 @@ void calc_d(ulong L, nmod_poly_t d[K_LWE + L], nmod_poly_t** H, const nmod_poly_
     }
 }
 
-void multiply_by_B_eta(ulong L, nmod_poly_t w[K_LWE + L], const nmod_poly_t d[2*ETA][K_LWE + L], ulong mod) {
+void multiply_by_B_eta(ulong L, nmod_poly_t w[K_LWE + L], const nmod_poly_t d[(2*ETA)* (K_LWE + L)], ulong mod) {
+    // Accumulate the first eta vectors
     for (int i = 0; i < K_LWE + L; i++) {
         nmod_poly_init(w[i], mod);
         nmod_poly_zero(w[i]);
-    }
-
-    // Accumulate the first eta vectors
-    for (int b = 0; b < ETA; b++) {
-        for (int i = 0; i < K_LWE + L; i++) {
-            nmod_poly_add(w[i], w[i], d[b][i]);
+        for (int b = 0; b < ETA; b++) {
+            nmod_poly_add(w[i], w[i], d[b * (K_LWE + L) + i]);
         }
     }
 
     // Subtract the last eta vectors
     for (int b = ETA; b < 2 * ETA; b++) {
         for (int i = 0; i < K_LWE + L; i++) {
-            nmod_poly_sub(w[i], w[i], d[b][i]);
+            nmod_poly_sub(w[i], w[i], d[b * (K_LWE + L) + i]);
         }
     }
 }
@@ -209,10 +206,22 @@ void calc_a(nmod_poly_t a[], const evmlr_otse_key_t key, const evmlr_otse_ctx_t 
     evmlr_utils_ring_to_bin(len, bits, d_bin, d_fmpz, MOD_Q);
 
     // a = H' B^n stack(d)
+    evmlr_calc_a(a, ctx, (nmod_poly_t *) d_bin);
+
+    for (int i = 0; i < K_LWE + ctx->L; i++) {
+        nmod_poly_clear(d[i]);
+        fmpz_poly_clear(d_fmpz[i]);
+        for (int j = 0; j < 2*ETA; ++j) {
+            nmod_poly_clear(d_bin[j][i]);
+        }
+    }
+}
+
+void evmlr_calc_a(nmod_poly_t a[], const evmlr_otse_ctx_t ctx, const nmod_poly_t d_stack[2 * ETA * (K_LWE + ctx->L)]) {
     nmod_poly_t w[K_LWE + ctx->L], tmp;
     nmod_poly_init(tmp, MOD_Q);
     // w = B_eta stack(d)
-    multiply_by_B_eta(ctx->L, w, d_bin, MOD_Q);
+    multiply_by_B_eta(ctx->L, w, d_stack, MOD_Q);
 
     // a = H' w
     for (int i = 0; i < ctx->L; i++) {
@@ -227,11 +236,6 @@ void calc_a(nmod_poly_t a[], const evmlr_otse_key_t key, const evmlr_otse_ctx_t 
 
     nmod_poly_clear(tmp);
     for (int i = 0; i < K_LWE + ctx->L; i++) {
-        nmod_poly_clear(d[i]);
-        fmpz_poly_clear(d_fmpz[i]);
-        for (int j = 0; j < 2*ETA; ++j) {
-            nmod_poly_clear(d_bin[j][i]);
-        }
         nmod_poly_clear(w[i]);
     }
 }
@@ -303,7 +307,7 @@ int main() {
     flint_rand_set_seed(state, seed[0], seed[1]);
 
     evmlr_otse_ctx_t ctx;
-    evmlr_otse_ctx_init(ctx, state, M_LEN);
+    evmlr_otse_ctx_init(ctx, M_LEN, state);
 
     test(state, ctx);
     bench(state, ctx);

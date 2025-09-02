@@ -16,11 +16,11 @@ typedef struct {
 typedef evmlr_otse_key_struct evmlr_otse_key_t[1];
 
 typedef struct {
-    nmod_poly_t* c; // ciphertext c \in R_q^{M_LEN}
+    nmod_poly_t* c; // ciphertext c \in R_q^{L}
 } evmlr_otse_ciphertext_struct;
 typedef evmlr_otse_ciphertext_struct evmlr_otse_ciphertext_t[1];
 
-void evmlr_otse_ctx_init(evmlr_otse_ctx_t ctx, flint_rand_t state, size_t L);
+void evmlr_otse_ctx_init(evmlr_otse_ctx_t ctx, size_t L, flint_rand_t state);
 
 void evmlr_otse_ctx_clear(evmlr_otse_ctx_t ctx);
 
@@ -28,6 +28,9 @@ void evmlr_otse_ctx_clear(evmlr_otse_ctx_t ctx);
 void evmlr_otse_keygen(evmlr_otse_key_t key, flint_rand_t state);
 
 void evmlr_otse_keyclear(evmlr_otse_key_t key);
+
+// a = H' * B^(n) d_dagger
+void evmlr_calc_a(nmod_poly_t a[], const evmlr_otse_ctx_t ctx, const nmod_poly_t d_stack[2 * ETA * (K_LWE + ctx->L)]);
 
 void evmlr_otse_encrypt(evmlr_otse_ciphertext_t ct, const nmod_poly_t m[], const evmlr_otse_key_t key, const evmlr_otse_ctx_t ctx);
 

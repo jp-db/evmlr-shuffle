@@ -24,7 +24,7 @@ void evmlr_commit_ctx_init(evmlr_commit_ctx_t ctx, ulong N, flint_rand_t state);
 void evmlr_commit_ctx_clear(evmlr_commit_ctx_t ctx);
 
 // sample from binom r \sample B^{2K_SIS}_eta
-void evmlr_sample_r(nmod_poly_t r[2*K_SIS]);
+void evmlr_commit_sample_r(nmod_poly_t r[2*K_SIS]);
 
 // c = A_1 * msg + A_2 * r
 void evmlr_commit(evmlr_commit_t com, const evmlr_commit_ctx_t ctx, const nmod_poly_t msg[ctx->N], const nmod_poly_t r[2 * K_SIS]);
