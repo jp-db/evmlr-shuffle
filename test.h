@@ -14,7 +14,6 @@
 #define TEST_H
 
 #include <string.h>
-#include <stdlib.h>
 #include <stdio.h>
 #include <sys/random.h>
 

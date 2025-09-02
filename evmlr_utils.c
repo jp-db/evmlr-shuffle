@@ -43,31 +43,76 @@ void evmlr_utils_int_to_bin(nmod_poly_t poly, ulong n) {
 }
 
 int evmlr_utils_binom_sample(int center) {
+    if (center == 0) return 0;
+
     int sample = 0;
+    // Calculate how many bytes we need. Each byte provides 4 samples (8 bits / 2 bits per sample).
+    ulong bytes_needed = (center + 3) / 4;
+    uint8_t* buff = (uint8_t*) malloc(bytes_needed);
 
-    // Sample from a centered binomial distribution
-    for (int i = 0; i < center; i++) {
-        // Generate a random bit (0 or 1)
-        u_int8_t buff[1];
-        getrandom(buff, sizeof(u_int8_t), 0);
-        // get first and second bits from buff
-        int a = (buff[0] & 1); // Random bit a
-        int b = (buff[0] >> 1) & 1; // Random bit b
+    // Single system call to get all the random data we need.
+    getrandom(buff, bytes_needed, 0);
 
-        sample += a - b; // Either 1, 0, or -1
+    int i = 0;
+    for (int j = 0; j < bytes_needed; ++j) {
+        uint8_t random_byte = buff[j];
+
+        // Process 4 samples from a single byte
+        for (int k = 0; k < 4 && i < center; ++k, ++i) {
+            int a = (random_byte >> (k * 2)) & 1;     // Bit a
+            int b = (random_byte >> (k * 2 + 1)) & 1; // Bit b
+            sample += a - b;
+        }
     }
 
+    free(buff);
     return sample;
 }
 
 void evmlr_utils_binom_sample_ring(nmod_poly_t poly, int center) {
+    if (center == 0) {
+        // Handle zero-center case (results in a zero polynomial)
+        nmod_poly_zero(poly);
+        return;
+    }
+
     nmod_poly_fit_length(poly, DEGREE_N);
+
+    // 1. Calculate total random data needed and fetch it in one call.
+    // Each sample needs 'center' pairs of bits (2 * center bits).
+    // Each 64-bit word provides 32 pairs of bits.
+    size_t total_bit_pairs = (size_t)DEGREE_N * center;
+    size_t words_needed = (total_bit_pairs + 31) / 32;
+    uint64_t* buff = (uint64_t*) malloc(words_needed * sizeof(uint64_t));
+
+    getrandom(buff, words_needed * sizeof(uint64_t), 0);
+
+    size_t word_idx = 0;
+    int bit_pair_idx = 0;
+
     for (slong i = 0; i < DEGREE_N; i++) {
-        int sample = evmlr_utils_binom_sample(center);
-        // Ensure the coefficient is non-negative modulo MOD_Q
+        int sample = 0;
+
+        for (int j = 0; j < center; j++) {
+            uint64_t current_word = buff[word_idx];
+
+            int a = (current_word >> (bit_pair_idx * 2)) & 1;
+            int b = (current_word >> (bit_pair_idx * 2 + 1)) & 1;
+            sample += a - b;
+
+            // Advance our position in the buffer.
+            bit_pair_idx++;
+            if (bit_pair_idx == 32) {
+                bit_pair_idx = 0;
+                word_idx++;
+            }
+        }
+
         ulong coeff = (sample + MOD_Q) % MOD_Q;
         nmod_poly_set_coeff_ui(poly, i, coeff);
     }
+
+    free(buff);
 }
 
 void evmlr_new_perm(ulong* perm, size_t len) {

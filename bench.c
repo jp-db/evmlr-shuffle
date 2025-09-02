@@ -5,13 +5,13 @@
 // Private Definitions
 
 //Stores the time measured before the execution of the benchmark.
-static long long before;
+static unsigned long long before;
 
 //Stores the time measured after the execution of the benchmark.
-static long long after;
+static unsigned long long after;
 
 //Stores the sum of timings for the current benchmark.
-static long long total;
+static unsigned long long total;
 
 // Public Definitions
 
@@ -24,7 +24,7 @@ void bench_before() {
 }
 
 void bench_after() {
-	long long result;
+	unsigned long long result;
 	after = cpucycles();
 	result = (after - before);
 	total += result;
@@ -35,10 +35,10 @@ void bench_compute(int benches) {
 }
 
 void bench_print() {
-	printf("%lld cycles\n", total);
+	printf("%lld cycles\n", bench_total());
 	printf("\n");
 }
 
-unsigned long long bench_get_total() {
+unsigned long long bench_total() {
 	return total;
 }

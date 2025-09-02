@@ -1,6 +1,8 @@
 #ifndef EVMLR_SHUFFLE_EVMLR_PARAMS_H
 
 #include "flint/nmod_poly.h"
+#include <stdlib.h>
+#include <stddef.h>
 
 #define MOD_Q 3109
 #define DEGREE_N 512
