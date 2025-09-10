@@ -19,117 +19,89 @@ void evmlr_mlpke_ctx_clear(evmlr_mlpke_ctx_t ctx) {
 
 void evmlr_mlpke_keypair_gen(evmlr_mlpke_keypair_t keypair, flint_rand_t state, const evmlr_mlpke_ctx_t ctx) {
     // Generate secret key s and error e with coefficients from B_eta
-    nmod_poly_t e[K_LWE];
-    for (size_t i = 0; i < K_LWE; i++) {
-        nmod_poly_init(keypair->sk->s[i], MOD_Q);
-        nmod_poly_init(e[i], MOD_Q);
-        evmlr_utils_binom_sample_ring(keypair->sk->s[i], ETA);
-        evmlr_utils_binom_sample_ring(e[i], ETA);
-    }
+    nmod_poly_mat_t e;
+    nmod_poly_mat_init(keypair->sk->s, K_LWE, 1, MOD_Q);
+    nmod_poly_mat_init(e, K_LWE, 1, MOD_Q);
+    evmlr_utils_binom_sample_mat_ring(keypair->sk->s, ETA);
+    evmlr_utils_binom_sample_mat_ring(e, ETA);
 
     // Generate public matrix A with uniform random coefficients
-    for (size_t i = 0; i < K_LWE; i++) {
-        for (size_t j = 0; j < K_LWE; j++) {
-            nmod_poly_init(keypair->pk->A[i][j], MOD_Q);
-            nmod_poly_randtest(keypair->pk->A[i][j], state, DEGREE_N);
-        }
-    }
+    nmod_poly_mat_init(keypair->pk->A, K_LWE, K_LWE, MOD_Q);
+    nmod_poly_mat_randtest(keypair->pk->A, state, DEGREE_N);
+
+    nmod_poly_mat_init(keypair->pk->t, K_LWE, 1, MOD_Q);
+    nmod_poly_mat_zero(keypair->pk->t);
 
     // Compute t = A * s + e
-    nmod_poly_t tmp;
-    nmod_poly_init(tmp, MOD_Q);
-    for (size_t i = 0; i < K_LWE; i++) {
-        nmod_poly_init(keypair->pk->t[i], MOD_Q);
-        nmod_poly_zero(keypair->pk->t[i]);
-        for (size_t j = 0; j < K_LWE; j++) {
-            nmod_poly_mulmod(tmp, keypair->pk->A[i][j], keypair->sk->s[j], ctx->cyclo_poly);
-            nmod_poly_add(keypair->pk->t[i], keypair->pk->t[i], tmp);
-        }
-        nmod_poly_add(keypair->pk->t[i], keypair->pk->t[i], e[i]);
-    }
+    nmod_poly_mat_mulmod(keypair->pk->t, keypair->pk->A, keypair->sk->s, ctx->cyclo_poly);
+    nmod_poly_mat_add(keypair->pk->t, keypair->pk->t, e);
 
-    nmod_poly_clear(tmp);
-    for (size_t i = 0; i < K_LWE; i++) {
-        nmod_poly_clear(e[i]);
-    }
+    nmod_poly_mat_clear(e);
 }
 
 void evmlr_mlpke_keypair_clear(evmlr_mlpke_keypair_t keypair) {
     // Clear secret key
-    for (size_t i = 0; i < K_LWE; i++) {
-        nmod_poly_clear(keypair->sk->s[i]);
-    }
+    nmod_poly_mat_clear(keypair->sk->s);
     // Clear public key
-    for (size_t i = 0; i < K_LWE; i++) {
-        for (size_t j = 0; j < K_LWE; j++) {
-            nmod_poly_clear(keypair->pk->A[i][j]);
-        }
-        nmod_poly_clear(keypair->pk->t[i]);
-    }
+    nmod_poly_mat_clear(keypair->pk->A);
+    nmod_poly_mat_clear(keypair->pk->t);
 }
 
 void evmlr_mlpke_enc(evmlr_mlpke_cipher_t cipher, const nmod_poly_t msg, const evmlr_mlpke_pk_t pk, const evmlr_mlpke_ctx_t ctx) {
-    // assert(evmlr_utils_is_poly_bin(msg));
-    nmod_poly_t r[K_LWE], e2[K_LWE], e3, tmp, msg_scaled;
-    // Sample r and e2 from B^{k_lwe}_{eta}
-    for (size_t i = 0; i < K_LWE; i++) {
-        nmod_poly_init(r[i], MOD_Q);
-        nmod_poly_init(e2[i], MOD_Q);
-        evmlr_utils_binom_sample_ring(r[i], ETA);
-        evmlr_utils_binom_sample_ring(e2[i], ETA);
-    }
+    nmod_poly_mat_t r, e2, tmp;
+    nmod_poly_t e3;
+
+    nmod_poly_mat_init(r, 1, K_LWE, MOD_Q);
+    nmod_poly_mat_init(e2, 1, K_LWE, MOD_Q);
+    // Sample r and e2 from B^{k_lwe}_{eta}, we already make them transpose
+    evmlr_utils_binom_sample_mat_ring(r, ETA);
+    evmlr_utils_binom_sample_mat_ring(e2, ETA);
 
     // Sample e3 from B_{eta}
     nmod_poly_init(e3, MOD_Q);
     evmlr_utils_binom_sample_ring(e3, ETA);
 
-    nmod_poly_init(tmp, MOD_Q);
     // Compute u^T = r^T A + e_2^T
-    for (size_t i = 0; i < K_LWE; i++) {
-        nmod_poly_init(cipher->uT[i], MOD_Q);
-        nmod_poly_zero(cipher->uT[i]);
-        for (size_t j = 0; j < K_LWE; j++) {
-            nmod_poly_mulmod(tmp, r[j], pk->A[j][i], ctx->cyclo_poly);
-            nmod_poly_add(cipher->uT[i], cipher->uT[i], tmp);
-        }
-        nmod_poly_add(cipher->uT[i], cipher->uT[i], e2[i]);
-    }
+    nmod_poly_mat_init(cipher->uT, 1, K_LWE, MOD_Q);
+    nmod_poly_mat_mulmod(cipher->uT, r, pk->A, ctx->cyclo_poly);
+    nmod_poly_mat_add(cipher->uT, cipher->uT, e2);
+
+    nmod_poly_mat_init(tmp, 1, 1, MOD_Q);
     // c = q/2 getting the closest integer with ties rounded up
     ulong c = (MOD_Q + 1) / 2;
     // Compute v = r^T t + e_3 + c * msg
     nmod_poly_init(cipher->v, MOD_Q);
-    nmod_poly_zero(cipher->v);
-    for (size_t i = 0; i < K_LWE; i++) {
-        nmod_poly_mulmod(tmp, r[i], pk->t[i], ctx->cyclo_poly);
-        nmod_poly_add(cipher->v, cipher->v, tmp);
-    }
-    nmod_poly_add(cipher->v, cipher->v, e3);
 
-    nmod_poly_init(msg_scaled, MOD_Q);
-    nmod_poly_scalar_mul_nmod(msg_scaled, msg, c);
+    nmod_poly_mat_mulmod(tmp, r, pk->t, ctx->cyclo_poly); // r^T t
+    nmod_poly_struct* poly = nmod_poly_mat_entry(tmp, 0, 0);
 
-    nmod_poly_add(cipher->v, cipher->v, msg_scaled);
+    nmod_poly_add(cipher->v, poly, e3); // + e_3
+    nmod_poly_scalar_mul_nmod(poly, msg, c); // c * msg
+    nmod_poly_add(cipher->v, cipher->v, poly); // + c * msg
 
-    nmod_poly_clear(tmp);
-    nmod_poly_clear(msg_scaled);
-    for (size_t i = 0; i < K_LWE; i++) {
-        nmod_poly_clear(r[i]);
-        nmod_poly_clear(e2[i]);
-    }
+    nmod_poly_mat_clear(tmp);
+    nmod_poly_mat_clear(r);
+    nmod_poly_mat_clear(e2);
     nmod_poly_clear(e3);
 }
 
 void evmlr_mlpke_dec(nmod_poly_t msg, const evmlr_mlpke_cipher_t cipher, const evmlr_mlpke_sk_t sk, const evmlr_mlpke_ctx_t ctx) {
     // \tilde{m} = v - u^T s
-    nmod_poly_t m_tilde, tmp;
+    nmod_poly_t m_tilde, one;
+    nmod_poly_mat_t tmp;
     nmod_poly_init(m_tilde, MOD_Q);
-    nmod_poly_init(tmp, MOD_Q);
+    nmod_poly_init(one, MOD_Q);
+    nmod_poly_one(one);
+    nmod_poly_mat_init(tmp, 1, 1, MOD_Q);
     nmod_poly_set(m_tilde, cipher->v);
-    for (size_t i = 0; i < K_LWE; i++) {
-        nmod_poly_mulmod(tmp, cipher->uT[i], sk->s[i], ctx->cyclo_poly);
-        nmod_poly_sub(m_tilde, m_tilde, tmp);
-    }
 
+    nmod_poly_mat_mul(tmp, cipher->uT, sk->s);
+    nmod_poly_struct* poly = nmod_poly_mat_entry(tmp, 0, 0);
+    nmod_poly_mulmod(poly, poly, one, ctx->cyclo_poly);
+
+    nmod_poly_sub(m_tilde, m_tilde, poly);
+
+    nmod_poly_init(msg, MOD_Q);
     nmod_poly_zero(msg);
     // msg = 0 if \tilde{m} is closer to 0 than to q/2, and 1 otherwise
     ulong threshold = (MOD_Q) / 4;
@@ -143,13 +115,12 @@ void evmlr_mlpke_dec(nmod_poly_t msg, const evmlr_mlpke_cipher_t cipher, const e
     }
 
     nmod_poly_clear(m_tilde);
-    nmod_poly_clear(tmp);
+    nmod_poly_clear(one);
+    nmod_poly_mat_clear(tmp);
 }
 
 void evmlr_mlpke_cipher_clear(evmlr_mlpke_cipher_t cipher) {
-    for (size_t i = 0; i < K_LWE; i++) {
-        nmod_poly_clear(cipher->uT[i]);
-    }
+    nmod_poly_mat_clear(cipher->uT);
     nmod_poly_clear(cipher->v);
 }
 

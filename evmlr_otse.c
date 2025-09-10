@@ -7,35 +7,25 @@
 #include "bench.h"
 #endif
 
-void calc_a(nmod_poly_t a[], const evmlr_otse_key_t key, const evmlr_otse_ctx_t ctx);
+void calc_a(nmod_poly_mat_t a, nmod_poly_mat_t d_dagger, const evmlr_otse_key_t key, const evmlr_otse_ctx_t ctx);
 
-void evmlr_otse_ctx_init(evmlr_otse_ctx_t ctx, size_t L, flint_rand_t state) {
-    uint alloc; // prevent compiler warning
+void evmlr_otse_ctx_init(evmlr_otse_ctx_t ctx, slong L, flint_rand_t state) {
     ctx->L = L;
     // H \sample R_{2^ZETA}^{(K_LWE + L) x K_LWR}
-    alloc = (K_LWE + L) * sizeof(nmod_poly_t*);
-    ctx->H = (nmod_poly_t**) malloc(alloc);
-    for (int i = 0; i < K_LWE + L; i++) {
-        ctx->H[i] = (nmod_poly_t*) malloc(K_LWR * sizeof(nmod_poly_t));
-        for (int j = 0; j < K_LWR; j++) {
-            nmod_poly_init(ctx->H[i][j], 2*ZETA);
-            nmod_poly_randtest(ctx->H[i][j], state, DEGREE_N);
-        }
-    }
+    nmod_poly_mat_init(ctx->H, K_LWE + L, K_LWR, 2*ZETA);
+    nmod_poly_mat_randtest(ctx->H, state, DEGREE_N);
 
     // H' = (H'' | I_{L}) \in R_q^{L x (K_LWE + L)}
-    alloc = L * sizeof(nmod_poly_t*);
-    ctx->H_prime = (nmod_poly_t**) malloc(alloc);
+    nmod_poly_mat_init(ctx->H_prime, L, K_LWE + L, MOD_Q);
     for (int i = 0; i < L; i++) {
-        ctx->H_prime[i] = (nmod_poly_t*) malloc((K_LWE + L) * sizeof(nmod_poly_t));
         for (int j = 0; j < K_LWE + L; j++) {
-            nmod_poly_init(ctx->H_prime[i][j], MOD_Q);
+            nmod_poly_struct* poly = nmod_poly_mat_entry(ctx->H_prime, i, j);
             if (j < K_LWE) { // H'' \sample R_q^{L x K_LWE}
-                nmod_poly_randtest(ctx->H_prime[i][j], state, DEGREE_N);
+                nmod_poly_randtest(poly, state, DEGREE_N);
             } else if (j == K_LWE + i) { // Identity matrix where row=col
-                nmod_poly_one(ctx->H_prime[i][j]);
+                nmod_poly_one(poly);
             } else { // Identity matrix where row!=col
-                nmod_poly_zero(ctx->H_prime[i][j]);
+                nmod_poly_zero(poly);
             }
         }
     }
@@ -46,73 +36,41 @@ void evmlr_otse_ctx_init(evmlr_otse_ctx_t ctx, size_t L, flint_rand_t state) {
 }
 
 void evmlr_otse_ctx_clear(evmlr_otse_ctx_t ctx) {
-    for (int i = 0; i < K_LWE + ctx->L; i++) {
-        for (int j = 0; j < K_LWR; j++) {
-            nmod_poly_clear(ctx->H[i][j]);
-        }
-        free(ctx->H[i]);
-    }
-    free(ctx->H);
-    for (int i = 0; i < ctx->L; i++) {
-        for (int j = 0; j < K_LWE + ctx->L; j++) {
-            nmod_poly_clear(ctx->H_prime[i][j]);
-        }
-        free(ctx->H_prime[i]);
-    }
-    free(ctx->H_prime);
+    nmod_poly_mat_clear(ctx->H);
+    nmod_poly_mat_clear(ctx->H_prime);
     nmod_poly_clear(ctx->cyclo_poly);
 }
 
 void evmlr_otse_keygen(evmlr_otse_key_t key, flint_rand_t state) {
-    for (int i = 0; i < K_LWR; i++) {
-        nmod_poly_init(key->s[i], MOD_Q);
-        evmlr_utils_sample_binary_poly(key->s[i], DEGREE_N, state);
-    }
+    nmod_poly_mat_init(key->s, K_LWR, 1, MOD_Q);
+    evmlr_utils_sample_binary_poly_mat(key->s, DEGREE_N, state); // s \sample {0,1}^{K_LWR}
 }
 
 void evmlr_otse_keyclear(evmlr_otse_key_t key) {
-    for (int i = 0; i < K_LWR; i++) {
-        nmod_poly_clear(key->s[i]);
-    }
+    nmod_poly_mat_clear(key->s);
 }
 
-void evmlr_otse_encrypt(evmlr_otse_ciphertext_t ct, const nmod_poly_t m[], const evmlr_otse_key_t key, const evmlr_otse_ctx_t ctx) {
-    nmod_poly_t a[ctx->L], tmp;
-    nmod_poly_init(tmp, MOD_Q);
-    calc_a(a, key, ctx);
+void evmlr_otse_encrypt(evmlr_otse_ciphertext_t ct, nmod_poly_mat_t d_dagger, const nmod_poly_mat_t m,
+                        const evmlr_otse_key_t key, const evmlr_otse_ctx_t ctx) {
     // c = m + a
-    ct->c = (nmod_poly_t*) malloc(ctx->L * sizeof(nmod_poly_t));
-    for (int i = 0; i < ctx->L; i++) {
-        nmod_poly_init(ct->c[i], MOD_Q);
-        nmod_poly_add(ct->c[i], m[i], a[i]);
-    }
-
-    nmod_poly_clear(tmp);
-    for (int i = 0; i < ctx->L; i++) {
-        nmod_poly_clear(a[i]);
-    }
+    nmod_poly_mat_init(ct->c, ctx->L, 1, MOD_Q);
+    calc_a(ct->c, d_dagger, key, ctx);
+    nmod_poly_mat_add(ct->c, m, ct->c);
 }
 
-void evmlr_otse_decrypt(nmod_poly_t m[], const evmlr_otse_ciphertext_t ct, const evmlr_otse_key_t key, const evmlr_otse_ctx_t ctx) {
-    nmod_poly_t a[ctx->L], tmp;
-    nmod_poly_init(tmp, MOD_Q);
-    calc_a(a, key, ctx);
+void evmlr_otse_decrypt(nmod_poly_mat_t m, const evmlr_otse_ciphertext_t ct, const evmlr_otse_key_t key, const evmlr_otse_ctx_t ctx) {
+    nmod_poly_mat_t a;
+    nmod_poly_mat_init(a, ctx->L, 1, MOD_Q);
+    calc_a(a, nullptr, key, ctx);
     // m = c - a
-    for (int i = 0; i < ctx->L; i++) {
-        nmod_poly_init(m[i], MOD_Q);
-        nmod_poly_sub(m[i], ct->c[i], a[i]);
-    }
-    nmod_poly_clear(tmp);
-    for (int i = 0; i < ctx->L; ++i) {
-        nmod_poly_clear(a[i]);
-    }
+    nmod_poly_mat_init(m, ctx->L, 1, MOD_Q);
+    nmod_poly_mat_sub(m, ct->c, a);
+
+    nmod_poly_mat_clear(a);
 }
 
-void evmlr_otse_ciphertext_clear(evmlr_otse_ciphertext_t ct, const evmlr_otse_ctx_t ctx) {
-    for (int i = 0; i < ctx->L; i++) {
-        nmod_poly_clear(ct->c[i]);
-    }
-    free(ct->c);
+void evmlr_otse_ciphertext_clear(evmlr_otse_ciphertext_t ct) {
+    nmod_poly_mat_clear(ct->c);
 }
 
 void round_poly(nmod_poly_t poly, const nmod_poly_t hs, const fmpz_t q1, const fmpz_t q2) {
@@ -140,7 +98,7 @@ void round_poly(nmod_poly_t poly, const nmod_poly_t hs, const fmpz_t q1, const f
     fmpz_clear(half_q1);
 }
 
-void calc_d(ulong L, nmod_poly_t d[K_LWE + L], nmod_poly_t** H, const nmod_poly_t s[K_LWR], const nmod_poly_t cyclo_poly) {
+void calc_d(nmod_poly_mat_t d, const nmod_poly_mat_t H, const nmod_poly_mat_t s, const nmod_poly_t cyclo_poly, slong L) {
     // ⌈Hs⌋_{2^ζ →2^{2η}} := ⌈(Hs * 2^{2η})/2^ζ⌋ mod 2^{2η} := Hs * q2/q1 mod q2
     fmpz_t q1, q2;
     fmpz_init(q1);
@@ -148,57 +106,54 @@ void calc_d(ulong L, nmod_poly_t d[K_LWE + L], nmod_poly_t** H, const nmod_poly_
     fmpz_set_ui(q1, 1UL << ZETA);      // q1 = 2^ζ
     fmpz_set_ui(q2, 1UL << (2 * ETA)); // q2 = 2^{2η}
 
-    // Hs
-    nmod_poly_t Hs[K_LWE + L], tmp;
-    nmod_poly_init(tmp, MOD_Q);
-    for (int i = 0; i < K_LWE + L; i++) {
-        nmod_poly_init(Hs[i], MOD_Q);
-        nmod_poly_zero(Hs[i]);
-        for (int j = 0; j < K_LWR; j++) {
-            nmod_poly_mulmod(tmp, H[i][j], s[j], cyclo_poly);
-            nmod_poly_add(Hs[i], Hs[i], tmp);
-        }
-    }
+    nmod_poly_mat_t Hs;
+    nmod_poly_mat_init(Hs, K_LWE + L, 1, MOD_Q);
+    nmod_poly_mat_mulmod(Hs, H, s, cyclo_poly);
+
     // d = Hs * q2/q1 mod q2
+    nmod_poly_mat_init(d, K_LWE + L, 1, MOD_Q);
     for (int i = 0; i < K_LWE + L; i++) {
-        nmod_poly_init(d[i], MOD_Q);
-        round_poly(d[i], Hs[i], q1, q2);
+        nmod_poly_struct* d_i = nmod_poly_mat_entry(d, i, 0);
+        nmod_poly_struct* Hs_i = nmod_poly_mat_entry(Hs, i, 0);
+        round_poly(d_i, Hs_i, q1, q2);
     }
 
-    nmod_poly_clear(tmp);
     fmpz_clear(q1);
     fmpz_clear(q2);
-    for (int i = 0; i < K_LWE + L; i++) {
-        nmod_poly_clear(Hs[i]);
-    }
+    nmod_poly_mat_clear(Hs);
 }
 
-void multiply_by_B_eta(ulong L, nmod_poly_t w[K_LWE + L], const nmod_poly_t d[(2*ETA)* (K_LWE + L)], ulong mod) {
+void multiply_by_B_eta(nmod_poly_mat_t w, const nmod_poly_mat_t d, slong L, ulong mod) {
+    nmod_poly_mat_init(w, K_LWE + L, 1, mod);
+    nmod_poly_mat_zero(w);
     // Accumulate the first eta vectors
     for (int i = 0; i < K_LWE + L; i++) {
-        nmod_poly_init(w[i], mod);
-        nmod_poly_zero(w[i]);
+        nmod_poly_struct* w_i = nmod_poly_mat_entry(w, i, 0);
         for (int b = 0; b < ETA; b++) {
-            nmod_poly_add(w[i], w[i], d[b * (K_LWE + L) + i]);
+            nmod_poly_struct* d_bi = nmod_poly_mat_entry(d, b * (K_LWE + L) + i, 0);
+            nmod_poly_add(w_i, w_i, d_bi);
         }
     }
-
     // Subtract the last eta vectors
-    for (int b = ETA; b < 2 * ETA; b++) {
-        for (int i = 0; i < K_LWE + L; i++) {
-            nmod_poly_sub(w[i], w[i], d[b * (K_LWE + L) + i]);
+    for (int i = 0; i < K_LWE + L; i++) {
+        nmod_poly_struct* w_i = nmod_poly_mat_entry(w, i, 0);
+        for (int b = ETA; b < 2 * ETA; b++) {
+            nmod_poly_struct* d_bi = nmod_poly_mat_entry(d, b * (K_LWE + L) + i, 0);
+            nmod_poly_sub(w_i, w_i, d_bi);
         }
     }
 }
 
-void calc_a(nmod_poly_t a[], const evmlr_otse_key_t key, const evmlr_otse_ctx_t ctx) {
-    nmod_poly_t d[K_LWE + ctx->L], d_bin[2 * ETA][K_LWE + ctx->L];
-    fmpz_poly_t d_fmpz[K_LWE + ctx->L];
+void calc_a(nmod_poly_mat_t a, nmod_poly_mat_t d_dagger, const evmlr_otse_key_t key, const evmlr_otse_ctx_t ctx) {
+    nmod_poly_mat_t d, d_bin;
+    nmod_poly_mat_init(d, K_LWE + ctx->L, 1, MOD_Q);
+    nmod_poly_mat_init(d_bin, 2 * ETA, K_LWE + ctx->L, MOD_Q);
 
-    calc_d(ctx->L, d, ctx->H, key->s, ctx->cyclo_poly);
+    calc_d(d, ctx->H, key->s, ctx->cyclo_poly, ctx->L); // d = ⌈Hs⌋_{2^ZETA →2^{2η}}
+    fmpz_poly_t d_fmpz[K_LWE + ctx->L];
     for (int i = 0; i < K_LWE + ctx->L; i++) {
         fmpz_poly_init(d_fmpz[i]);
-        fmpz_poly_set_nmod_poly(d_fmpz[i], d[i]);
+        fmpz_poly_set_nmod_poly(d_fmpz[i], nmod_poly_mat_entry(d, i, 0));
     }
 
     slong len = K_LWE + ctx->L;
@@ -206,38 +161,30 @@ void calc_a(nmod_poly_t a[], const evmlr_otse_key_t key, const evmlr_otse_ctx_t 
     evmlr_utils_ring_to_bin(len, bits, d_bin, d_fmpz, MOD_Q);
 
     // a = H' B^n stack(d)
-    evmlr_calc_a(a, ctx, (nmod_poly_t *) d_bin);
+    if (d_dagger != NULL) {
+        evmlr_utils_stack(d_dagger, d_bin, MOD_Q); // d_dagger = stack(d_bin)
+        evmlr_calc_a(a, d_dagger, ctx);
+    } else {
+        nmod_poly_mat_t tmp_dagger;
+        evmlr_utils_stack(tmp_dagger, d_bin, MOD_Q); // d_dagger = stack(d_bin)
+        evmlr_calc_a(a, tmp_dagger, ctx);
+        nmod_poly_mat_clear(tmp_dagger);
+    }
 
     for (int i = 0; i < K_LWE + ctx->L; i++) {
-        nmod_poly_clear(d[i]);
         fmpz_poly_clear(d_fmpz[i]);
-        for (int j = 0; j < 2*ETA; ++j) {
-            nmod_poly_clear(d_bin[j][i]);
-        }
     }
+    nmod_poly_mat_clear(d);
+    nmod_poly_mat_clear(d_bin);
 }
 
-void evmlr_calc_a(nmod_poly_t a[], const evmlr_otse_ctx_t ctx, const nmod_poly_t d_stack[2 * ETA * (K_LWE + ctx->L)]) {
-    nmod_poly_t w[K_LWE + ctx->L], tmp;
-    nmod_poly_init(tmp, MOD_Q);
+void evmlr_calc_a(nmod_poly_mat_t a, const nmod_poly_mat_t d_stack, const evmlr_otse_ctx_t ctx) {
     // w = B_eta stack(d)
-    multiply_by_B_eta(ctx->L, w, d_stack, MOD_Q);
-
+    nmod_poly_mat_t w;
+    multiply_by_B_eta(w, d_stack, ctx->L, MOD_Q);
     // a = H' w
-    for (int i = 0; i < ctx->L; i++) {
-        nmod_poly_init(a[i], MOD_Q);
-        nmod_poly_zero(a[i]);
-        for (int j = 0; j < K_LWE + ctx->L; j++) {
-            nmod_poly_init(tmp, MOD_Q);
-            nmod_poly_mulmod(tmp, ctx->H_prime[i][j], w[j], ctx->cyclo_poly);
-            nmod_poly_add(a[i], a[i], tmp);
-        }
-    }
-
-    nmod_poly_clear(tmp);
-    for (int i = 0; i < K_LWE + ctx->L; i++) {
-        nmod_poly_clear(w[i]);
-    }
+    nmod_poly_mat_mulmod(a, ctx->H_prime, w, ctx->cyclo_poly);
+    nmod_poly_mat_clear(w);
 }
 
 #ifdef MAIN
@@ -245,28 +192,22 @@ void test(flint_rand_t rand, evmlr_otse_ctx_t ctx) {
     evmlr_otse_key_t key;
     evmlr_otse_keygen(key, rand);
 
-    nmod_poly_t msg[ctx->L], decrypted_msg[ctx->L];
-    for (int i = 0; i < ctx->L; i++) {
-        nmod_poly_init(msg[i], MOD_Q);
-        nmod_poly_randtest(msg[i], rand, DEGREE_N);
-    }
+    nmod_poly_mat_t msg, decrypted_msg;
+    nmod_poly_mat_init(msg, ctx->L, 1, MOD_Q);
+    nmod_poly_mat_randtest(msg, rand, DEGREE_N);
 
     evmlr_otse_ciphertext_t ct;
     TEST_BEGIN("encryption and decryption are consistent") {
-        evmlr_otse_encrypt(ct, msg, key, ctx);
+        evmlr_otse_encrypt(ct, nullptr, msg, key, ctx);
         evmlr_otse_decrypt(decrypted_msg, ct, key, ctx);
-        for (int i = 0; i < ctx->L; i++) {
-            TEST_ASSERT(nmod_poly_equal(msg[i], decrypted_msg[i]) == 1, end)
-        }
+        TEST_ASSERT(nmod_poly_mat_equal(msg, decrypted_msg) == 1, end)
     } TEST_END;
 
     end:
-        evmlr_otse_ciphertext_clear(ct, ctx);
+        evmlr_otse_ciphertext_clear(ct);
         evmlr_otse_keyclear(key);
-        for (int i = 0; i < ctx->L; i++) {
-            nmod_poly_clear(msg[i]);
-            nmod_poly_clear(decrypted_msg[i]);
-        }
+        nmod_poly_mat_clear(msg);
+        nmod_poly_mat_clear(decrypted_msg);
 }
 
 void bench(flint_rand_t rand, evmlr_otse_ctx_t ctx) {
@@ -275,29 +216,25 @@ void bench(flint_rand_t rand, evmlr_otse_ctx_t ctx) {
         BENCH_ADD(evmlr_otse_keygen(key, rand))
     } BENCH_END;
 
-    nmod_poly_t msg[ctx->L];
-    for (int i = 0; i < ctx->L; i++) {
-        nmod_poly_init(msg[i], MOD_Q);
-        nmod_poly_randtest(msg[i], rand, DEGREE_N);
-    }
+    nmod_poly_mat_t msg;
+    nmod_poly_mat_init(msg, ctx->L, 1, MOD_Q);
+    nmod_poly_mat_randtest(msg, rand, DEGREE_N);
 
     evmlr_otse_ciphertext_t ct;
     BENCH_BEGIN("evmlr_otse_encrypt") {
-        BENCH_ADD(evmlr_otse_encrypt(ct, msg, key, ctx))
+        BENCH_ADD(evmlr_otse_encrypt(ct, nullptr, msg, key, ctx))
     } BENCH_END;
 
-    nmod_poly_t decrypted_msg[ctx->L];
+    nmod_poly_mat_t decrypted_msg;
     BENCH_BEGIN("evmlr_otse_decrypt") {
         BENCH_ADD(evmlr_otse_decrypt(decrypted_msg, ct, key, ctx))
     } BENCH_END;
 
     evmlr_otse_keyclear(key);
-    for (int i = 0; i < ctx->L; i++) {
-        nmod_poly_clear(msg[i]);
-        nmod_poly_clear(decrypted_msg[i]);
-    }
+    evmlr_otse_ciphertext_clear(ct);
+    nmod_poly_mat_clear(msg);
+    nmod_poly_mat_clear(decrypted_msg);
 }
-
 
 int main() {
     flint_rand_t state;

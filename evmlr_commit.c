@@ -10,83 +10,64 @@ ulong compute_b(ulong L) {
     return (DEGREE_N * L) + (DEGREE_N * 2 * K_SIS * ETA * ETA);
 }
 
-void evmlr_commit_ctx_init(evmlr_commit_ctx_t ctx, ulong N, flint_rand_t state) {
+void evmlr_commit_ctx_init(evmlr_commit_ctx_t ctx, slong N, flint_rand_t state) {
     ctx->b_sqr = compute_b(N);
     ctx->N = N;
 
     // A_1 \sample R_q^{K_SIS x N}
-    for (ulong i = 0; i < K_SIS; i++) {
-        ctx->A_1[i] = (nmod_poly_t*) malloc(sizeof(nmod_poly_t) * N);
-        for (ulong j = 0; j < N; j++) {
-            nmod_poly_init(ctx->A_1[i][j], MOD_Q);
-            nmod_poly_randtest(ctx->A_1[i][j], state, DEGREE_N);
-        }
-    }
+    nmod_poly_mat_init(ctx->A_1, K_SIS, N, MOD_Q);
+    nmod_poly_mat_randtest(ctx->A_1, state, DEGREE_N);
+
     // A_2 \sample R_q^{K_SIS x 2K_SIS}
-    for (ulong i = 0; i < K_SIS; i++) {
-        for (ulong j = 0; j < 2 * K_SIS; j++) {
-            nmod_poly_init(ctx->A_2[i][j], MOD_Q);
-            nmod_poly_randtest(ctx->A_2[i][j], state, DEGREE_N);
-        }
-    }
+    nmod_poly_mat_init(ctx->A_2, K_SIS, 2 * K_SIS, MOD_Q);
+    nmod_poly_mat_randtest(ctx->A_2, state, DEGREE_N);
+
     nmod_poly_init(ctx->cyclo_poly, MOD_Q);
     nmod_poly_set_coeff_ui(ctx->cyclo_poly, DEGREE_N, 1);
     nmod_poly_set_coeff_ui(ctx->cyclo_poly, 0, 1);
 }
 
 void evmlr_commit_ctx_clear(evmlr_commit_ctx_t ctx) {
-    // Clear A_1
-    for (ulong i = 0; i < K_SIS; i++) {
-        for (ulong j = 0; j < ctx->N; j++) {
-            nmod_poly_clear(ctx->A_1[i][j]);
-        }
-        free(ctx->A_1[i]);
-    }
-    // Clear A_2
-    for (ulong i = 0; i < K_SIS; i++) {
-        for (ulong j = 0; j < 2 * K_SIS; j++) {
-            nmod_poly_clear(ctx->A_2[i][j]);
-        }
-    }
+    nmod_poly_mat_clear(ctx->A_1);
+    nmod_poly_mat_clear(ctx->A_2);
 }
 
-void evmlr_commit_sample_r(nmod_poly_t r[2*K_SIS]) {
-    for (ulong i = 0; i < 2 * K_SIS; i++) {
-        nmod_poly_init(r[i], MOD_Q);
-        evmlr_utils_binom_sample_ring(r[i], ETA);
-    }
+void evmlr_commit_sample_r(nmod_poly_mat_t r) {
+    nmod_poly_mat_init(r, 2 * K_SIS, 1, MOD_Q);
+    evmlr_utils_binom_sample_mat_ring(r, ETA);
 }
 
-void evmlr_commit(evmlr_commit_t com, const evmlr_commit_ctx_t ctx, const nmod_poly_t msg[ctx->N], const nmod_poly_t r[2 * K_SIS]) {
+void evmlr_commit(evmlr_commit_t com, const nmod_poly_mat_t msg, const nmod_poly_mat_t r, const evmlr_commit_ctx_t ctx) {
     // Initialize commitment polynomials
-    for (ulong i = 0; i < K_SIS; i++) {
-        nmod_poly_init(com->c[i], MOD_Q);
-        nmod_poly_zero(com->c[i]);
-    }
+    nmod_poly_mat_init(com->c, K_SIS, 1, MOD_Q);
 
-    nmod_poly_t tmp;
-    nmod_poly_init(tmp, MOD_Q);
+    nmod_poly_mat_t tmp;
+    nmod_poly_mat_init(tmp, K_SIS, 1, MOD_Q);
+    nmod_poly_t one;
+    nmod_poly_init(one, MOD_Q);
+    nmod_poly_one(one);
 
     // Compute c = A_1 * msg + A_2 * r
-    for (ulong i = 0; i < K_SIS; i++) {
-        // A_1 * msg
-        for (ulong j = 0; j < ctx->N; j++) {
-            nmod_poly_mul(tmp, ctx->A_1[i][j], msg[j]);
-            nmod_poly_add(com->c[i], com->c[i], tmp);
-        }
-        // A_2 * r
-        for (ulong j = 0; j < 2 * K_SIS; j++) {
-            nmod_poly_mul(tmp, ctx->A_2[i][j], r[j]);
-            nmod_poly_add(com->c[i], com->c[i], tmp);
-        }
+    nmod_poly_mat_mul(com->c, ctx->A_1, msg);
+    for (slong i = 0; i < K_SIS; i++) {
+        nmod_poly_struct* c_i = nmod_poly_mat_entry(com->c, i, 0);
+        nmod_poly_mulmod(c_i, c_i, one, ctx->cyclo_poly);
     }
-    nmod_poly_clear(tmp);
+
+    nmod_poly_mat_mul(tmp, ctx->A_2, r);
+    for (slong i = 0; i < K_SIS; i++) {
+        nmod_poly_struct* tmp_i = nmod_poly_mat_entry(tmp, i, 0);
+        nmod_poly_mulmod(tmp_i, tmp_i, one, ctx->cyclo_poly);
+    }
+
+    nmod_poly_mat_add(com->c, com->c, tmp);
+
+    nmod_poly_mat_clear(tmp);
+    nmod_poly_clear(one);
 }
 
 void evmlr_commit_clear(evmlr_commit_t com) {
-    for (ulong i = 0; i < K_SIS; i++) {
-        nmod_poly_clear(com->c[i]);
-    }
+    nmod_poly_mat_clear(com->c);
 }
 
 ulong nmod_poly_norm_sqr(const nmod_poly_t poly) {
@@ -101,18 +82,18 @@ ulong nmod_poly_norm_sqr(const nmod_poly_t poly) {
    return norm;
 }
 
-int verify_norm(const ulong L, const nmod_poly_t msg[L], const nmod_poly_t r[2 * K_SIS], ulong b_sqr) {
+int verify_norm(const ulong L, const nmod_poly_mat_t msg, const nmod_poly_mat_t r, ulong b_sqr) {
     ulong total_norm = 0;
-    for (ulong i = 0; i < L; i++) {
-        total_norm += nmod_poly_hamming_weight(msg[i]);
+    for (slong i = 0; i < L; i++) {
+        total_norm += nmod_poly_hamming_weight(nmod_poly_mat_entry(msg, i, 0));
     }
-    for (ulong i = 0; i < 2 * K_SIS; i++) {
-        total_norm += nmod_poly_norm_sqr(r[i]);
+    for (slong i = 0; i < 2 * K_SIS; i++) {
+        total_norm += nmod_poly_norm_sqr(nmod_poly_mat_entry(r, i, 0));
     }
     return total_norm <= b_sqr;
 }
 
-int evmlr_commit_verify(const evmlr_commit_t com, const evmlr_commit_ctx_t ctx, const nmod_poly_t msg[ctx->N], const nmod_poly_t r[2 * K_SIS]) {
+int evmlr_commit_verify(const evmlr_commit_t com, const nmod_poly_mat_t msg, const nmod_poly_mat_t r, const evmlr_commit_ctx_t ctx) {
     // ||\binom{m}{r}|| <= B
     int valid = verify_norm(ctx->N, msg, r, ctx->b_sqr);
     if (!valid) {
@@ -120,11 +101,8 @@ int evmlr_commit_verify(const evmlr_commit_t com, const evmlr_commit_ctx_t ctx, 
     }
     // c = A_1 * msg + A_2 * r
     evmlr_commit_t recomputed_com;
-    evmlr_commit(recomputed_com, ctx, msg, r);
-
-    for (int i = 0; i < K_SIS && valid; i++) {
-        valid &= nmod_poly_equal(com->c[i], recomputed_com->c[i]);
-    }
+    evmlr_commit(recomputed_com, msg, r, ctx);
+    valid = nmod_poly_mat_equal(com->c, recomputed_com->c);
 
     evmlr_commit_clear(recomputed_com);
     return valid;
@@ -134,63 +112,55 @@ int evmlr_commit_verify(const evmlr_commit_t com, const evmlr_commit_ctx_t ctx, 
 
 void test(evmlr_commit_ctx_t ctx) {
     ulong msg_value[ctx->N];
-    nmod_poly_t msg[ctx->N], r[2 * K_SIS];
+    nmod_poly_mat_t msg, r;
     evmlr_commit_t com;
     // Sample message
     getrandom(msg_value, sizeof(ulong) * ctx->N, 0);
-    for (ulong i = 0; i < ctx->N; i++) {
-        nmod_poly_init(msg[i], MOD_Q);
-        evmlr_utils_int_to_bin(msg[i], msg_value[i]);
+    nmod_poly_mat_init(msg, ctx->N, 1, MOD_Q);
+    for (slong i = 0; i < ctx->N; i++) {
+        evmlr_utils_int_to_bin(nmod_poly_mat_entry(msg, i, 0), msg_value[i]);
     }
     // Sample r
     evmlr_commit_sample_r(r);
 
 
     TEST_BEGIN("commitments can be created and verified") {
-        evmlr_commit(com, ctx, msg, r);
-        int valid = evmlr_commit_verify(com, ctx, msg, r);
+        evmlr_commit(com, msg, r, ctx);
+        int valid = evmlr_commit_verify(com, msg, r, ctx);
         TEST_ASSERT(valid == 1, end)
     } TEST_END;
 
     end:
-        for (ulong i = 0; i < ctx->N; i++) {
-            nmod_poly_clear(msg[i]);
-        }
-        for (ulong i = 0; i < 2 * K_SIS; i++) {
-            nmod_poly_clear(r[i]);
-        }
+        nmod_poly_mat_clear(msg);
+        nmod_poly_mat_clear(r);
         evmlr_commit_clear(com);
 }
 
 void bench(evmlr_commit_ctx_t ctx) {
     ulong msg_value[ctx->N];
-    nmod_poly_t msg[ctx->N], r[2 * K_SIS];
+    nmod_poly_mat_t msg, r;
     evmlr_commit_t com;
     // Sample message
     getrandom(msg_value, sizeof(ulong) * ctx->N, 0);
-    for (ulong i = 0; i < ctx->N; i++) {
-        nmod_poly_init(msg[i], MOD_Q);
-        evmlr_utils_int_to_bin(msg[i], msg_value[i]);
+    nmod_poly_mat_init(msg, ctx->N, 1, MOD_Q);
+    for (slong i = 0; i < ctx->N; i++) {
+        evmlr_utils_int_to_bin(nmod_poly_mat_entry(msg, i, 0), msg_value[i]);
     }
     // Sample r
     evmlr_commit_sample_r(r);
 
     BENCH_BEGIN("evmlr_commit") {
-        BENCH_ADD(evmlr_commit(com, ctx, msg, r))
+        BENCH_ADD(evmlr_commit(com, msg, r, ctx))
         evmlr_commit_clear(com);
     } BENCH_END;
 
     BENCH_BEGIN("evmlr_commit_verify") {
-        evmlr_commit(com, ctx, msg, r);
-        BENCH_ADD(evmlr_commit_verify(com, ctx, msg, r))
+        evmlr_commit(com, msg, r, ctx);
+        BENCH_ADD(evmlr_commit_verify(com,msg, r, ctx))
     } BENCH_END;
 
-    for (ulong i = 0; i < ctx->N; i++) {
-        nmod_poly_clear(msg[i]);
-    }
-    for (ulong i = 0; i < 2 * K_SIS; i++) {
-        nmod_poly_clear(r[i]);
-    }
+    nmod_poly_mat_clear(msg);
+    nmod_poly_mat_clear(r);
     evmlr_commit_clear(com);
 }
 

@@ -22,6 +22,18 @@ int evmlr_utils_is_bin(const nmod_poly_t* poly, slong len) {
     return 1; // All polynomials are binary
 }
 
+int evmlr_utils_is_mat_bin(const nmod_poly_mat_t mat) {
+    for (slong i = 0; i < mat->r; i++) {
+        for (slong j = 0; j < mat->c; j++) {
+            nmod_poly_struct* poly = nmod_poly_mat_entry(mat, i, j);
+            if (!evmlr_utils_is_poly_bin(poly)) {
+                return 0; // Return false if any polynomial is not binary
+            }
+        }
+    }
+    return 1; // All polynomials in the matrix are binary
+}
+
 void evmlr_utils_int_to_bin(nmod_poly_t poly, ulong n) {
     slong degree = 0;
     ulong temp = n;
@@ -115,7 +127,15 @@ void evmlr_utils_binom_sample_ring(nmod_poly_t poly, int center) {
     free(buff);
 }
 
-void evmlr_new_perm(ulong* perm, size_t len) {
+void evmlr_utils_binom_sample_mat_ring(nmod_poly_mat_t mat, int center) {
+    for (slong i = 0; i < mat->r; i++) {
+        for (slong j = 0; j < mat->c; j++) {
+            evmlr_utils_binom_sample_ring(nmod_poly_mat_entry(mat, i, j), center);
+        }
+    }
+}
+
+void evmlr_utils_new_perm(ulong* perm, size_t len) {
     // Initialize the permutation array with the identity permutation
     for (size_t i = 0; i < len; i++) {
         perm[i] = i;
@@ -134,7 +154,7 @@ void evmlr_new_perm(ulong* perm, size_t len) {
     }
 }
 
-void evmlr_utils_ring_to_bin(size_t len, int bits, nmod_poly_t bin_vec[bits][len], const fmpz_poly_t ring_vec[len], ulong mod) {
+void evmlr_utils_ring_to_bin(size_t len, int bits, nmod_poly_mat_t bin_vec, const fmpz_poly_t ring_vec[len], ulong mod) {
     fmpz_t coeff, two_pow_b_minus_1, two_pow_b;
     fmpz_init(coeff);
     fmpz_init(two_pow_b_minus_1);
@@ -146,17 +166,13 @@ void evmlr_utils_ring_to_bin(size_t len, int bits, nmod_poly_t bin_vec[bits][len
     fmpz_set_ui(two_pow_b_minus_1, 1);
     fmpz_mul_2exp(two_pow_b_minus_1, two_pow_b_minus_1, bits - 1); // 2^(b-1)
 
-    for (int b = 0; b < bits; b++) {
-        for (size_t i = 0; i < len; i++) {
-            nmod_poly_init(bin_vec[b][i], mod);
-            nmod_poly_zero(bin_vec[b][i]);
-        }
-    }
+    nmod_poly_mat_init(bin_vec, bits, len, mod);
+    nmod_poly_mat_zero(bin_vec);
 
     for (slong i = 0; i < len; i++) {
         slong deg = fmpz_poly_degree(ring_vec[i]);
         for (int j = 0; j < bits; j++) {
-            nmod_poly_fit_length(bin_vec[j][i], deg + 1);
+            nmod_poly_fit_length(nmod_poly_mat_entry(bin_vec, j, i), deg + 1);
         }
         for (slong k = 0; k < deg; k++) {
             fmpz_poly_get_coeff_fmpz(coeff, ring_vec[i], k);
@@ -167,7 +183,7 @@ void evmlr_utils_ring_to_bin(size_t len, int bits, nmod_poly_t bin_vec[bits][len
             }
             for (int j = 0; j < bits; j++) {
                 if (fmpz_tstbit(coeff, j)) {
-                    nmod_poly_set_coeff_ui(bin_vec[j][i], k, 1);
+                    nmod_poly_set_coeff_ui(nmod_poly_mat_entry(bin_vec, j, i), k, 1);
                 }
             }
         }
@@ -178,11 +194,12 @@ void evmlr_utils_ring_to_bin(size_t len, int bits, nmod_poly_t bin_vec[bits][len
     fmpz_clear(two_pow_b);
 }
 
-void evmlr_utils_stack(size_t len, int bits, nmod_poly_t stack[bits * len], const nmod_poly_t bin_vec[bits][len], ulong mod) {
-    for (int b = 0; b < bits; b++) {
-        for (size_t i = 0; i < len; i++) {
-            nmod_poly_init(stack[b * len + i], mod);
-            nmod_poly_set(stack[b * len + i], bin_vec[b][i]);
+void evmlr_utils_stack(nmod_poly_mat_t stack, const nmod_poly_mat_t bin_vec, ulong mod) {
+    nmod_poly_mat_init(stack, bin_vec->c * bin_vec->r, 1, mod);
+    for (slong b = 0; b < bin_vec->r; b++) {
+        for (slong i = 0; i < bin_vec->c; i++) {
+            nmod_poly_struct* stack_entry = nmod_poly_mat_entry(stack, b * bin_vec->c + i, 0);
+            nmod_poly_set(stack_entry, nmod_poly_mat_entry(bin_vec, b, i));
         }
     }
 }
@@ -193,4 +210,26 @@ void evmlr_utils_sample_binary_poly(nmod_poly_t poly, slong degree, flint_rand_t
         ulong rand_bit = n_randint(state, 2); // Random bit 0 or 1
         nmod_poly_set_coeff_ui(poly, i, rand_bit);
     }
+}
+
+void evmlr_utils_sample_binary_poly_mat(nmod_poly_mat_t mat, slong degree, flint_rand_t state) {
+    for (slong i = 0; i < mat->r; i++) {
+        for (slong j = 0; j < mat->c; j++) {
+            evmlr_utils_sample_binary_poly(nmod_poly_mat_entry(mat, i, j), degree, state);
+        }
+    }
+}
+
+void nmod_poly_mat_mulmod(nmod_poly_mat_t res, const nmod_poly_mat_t mat1, const nmod_poly_mat_t mat2, const nmod_poly_t mod) {
+    nmod_poly_t one;
+    nmod_poly_init(one, mod->mod.n);
+    nmod_poly_one(one);
+
+    nmod_poly_mat_mul(res, mat1, mat2);
+    for (slong i = 0; i < res->r; i++) {
+        for (slong j = 0; j < res->c; j++) {
+            nmod_poly_mulmod(nmod_poly_mat_entry(res, i, j), nmod_poly_mat_entry(res, i, j), one, mod);
+        }
+    }
+    nmod_poly_clear(one);
 }

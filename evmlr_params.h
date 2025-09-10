@@ -1,6 +1,7 @@
 #ifndef EVMLR_SHUFFLE_EVMLR_PARAMS_H
 
 #include "flint/nmod_poly.h"
+#include "flint/nmod_poly_mat.h"
 #include <stdlib.h>
 #include <stddef.h>
 

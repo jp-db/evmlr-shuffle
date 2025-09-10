@@ -8,14 +8,14 @@ typedef struct {
 typedef evmlr_mlpke_ctx_struct evmlr_mlpke_ctx_t[1];
 
 typedef struct {
-    nmod_poly_t s[K_LWE];
+    nmod_poly_mat_t s; // secret key s \in R_q^{K_LWE}
 } evmlr_mlpke_sk_struct;
 typedef evmlr_mlpke_sk_struct evmlr_mlpke_sk_t[1];
 
 typedef struct {
-    nmod_poly_t A[K_LWE][K_LWE];
+    nmod_poly_mat_t A; // public matrix A \in R_q^{K_LWE x K_LWE}
     // t = A*s + e
-    nmod_poly_t t[K_LWE];
+    nmod_poly_mat_t t; // public vector t \in R_q^{K_LWE}
 } evmlr_mlpke_pk_struct;
 typedef evmlr_mlpke_pk_struct evmlr_mlpke_pk_t[1];
 
@@ -26,11 +26,7 @@ typedef struct {
 typedef evmlr_mlpke_keypair_struct evmlr_mlpke_keypair_t[1];
 
 typedef struct {
-    // r, e_2 \sample B^{K_LWE}_\eta
-    // u^T = r^T A + e_2^T
-    nmod_poly_t uT[K_LWE];
-    // e_3 \sample B_\eta
-    // v = r^T t + e_3 + \lfloor q/2 \rfloor * msg
+    nmod_poly_mat_t uT; // vector of K_LWE polynomials
     nmod_poly_t v;
 } evmlr_mlpke_cipher_struct;
 typedef evmlr_mlpke_cipher_struct evmlr_mlpke_cipher_t[1];
