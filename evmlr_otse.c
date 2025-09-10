@@ -146,19 +146,9 @@ void multiply_by_B_eta(nmod_poly_mat_t w, const nmod_poly_mat_t d, slong L, ulon
 
 void calc_a(nmod_poly_mat_t a, nmod_poly_mat_t d_dagger, const evmlr_otse_key_t key, const evmlr_otse_ctx_t ctx) {
     nmod_poly_mat_t d, d_bin;
-    nmod_poly_mat_init(d, K_LWE + ctx->L, 1, MOD_Q);
-    nmod_poly_mat_init(d_bin, 2 * ETA, K_LWE + ctx->L, MOD_Q);
-
     calc_d(d, ctx->H, key->s, ctx->cyclo_poly, ctx->L); // d = ⌈Hs⌋_{2^ZETA →2^{2η}}
-    fmpz_poly_t d_fmpz[K_LWE + ctx->L];
-    for (int i = 0; i < K_LWE + ctx->L; i++) {
-        fmpz_poly_init(d_fmpz[i]);
-        fmpz_poly_set_nmod_poly(d_fmpz[i], nmod_poly_mat_entry(d, i, 0));
-    }
-
-    slong len = K_LWE + ctx->L;
     int bits = 2 * ETA;
-    evmlr_utils_ring_to_bin(len, bits, d_bin, d_fmpz, MOD_Q);
+    evmlr_utils_ring_to_bin(d_bin, d, bits);
 
     // a = H' B^n stack(d)
     if (d_dagger != NULL) {
@@ -169,10 +159,6 @@ void calc_a(nmod_poly_mat_t a, nmod_poly_mat_t d_dagger, const evmlr_otse_key_t 
         evmlr_utils_stack(tmp_dagger, d_bin, MOD_Q); // d_dagger = stack(d_bin)
         evmlr_calc_a(a, tmp_dagger, ctx);
         nmod_poly_mat_clear(tmp_dagger);
-    }
-
-    for (int i = 0; i < K_LWE + ctx->L; i++) {
-        fmpz_poly_clear(d_fmpz[i]);
     }
     nmod_poly_mat_clear(d);
     nmod_poly_mat_clear(d_bin);

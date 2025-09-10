@@ -154,43 +154,79 @@ void evmlr_utils_new_perm(ulong* perm, size_t len) {
     }
 }
 
-void evmlr_utils_ring_to_bin(size_t len, int bits, nmod_poly_mat_t bin_vec, const fmpz_poly_t ring_vec[len], ulong mod) {
-    fmpz_t coeff, two_pow_b_minus_1, two_pow_b;
-    fmpz_init(coeff);
-    fmpz_init(two_pow_b_minus_1);
-    fmpz_init(two_pow_b);
+void armod(nmod_poly_t out, uint64_t* top, const uint64_t* in, uint64_t deg, ulong mod) {
+    for (slong i = 0; i < deg; i++) {
+        nmod_poly_set_coeff_ui(out, i, in[i] % mod);
+        top[i] = (in[i] - nmod_poly_get_coeff_ui(out, i)) / mod;
+    }
+}
 
-    fmpz_set_ui(two_pow_b, 1);
-    fmpz_mul_2exp(two_pow_b, two_pow_b, bits); // 2^b
+void evmlr_utils_poly_decompose(nmod_poly_mat_t bin_vec, slong mat_col, const nmod_poly_t poly, int bits, int base) {
+    uint64_t top[poly->length];
+    nmod_poly_t tmp;
+    nmod_poly_init(tmp, poly->mod.n);
 
-    fmpz_set_ui(two_pow_b_minus_1, 1);
-    fmpz_mul_2exp(two_pow_b_minus_1, two_pow_b_minus_1, bits - 1); // 2^(b-1)
+    for (slong i = 0; i < poly->length; i++) {
+        top[i] = nmod_poly_get_coeff_ui(poly, i);
+    }
+    for (int j = 0; j < bits; j++) {
+        armod(nmod_poly_mat_entry(bin_vec, j, mat_col), top, top, poly->length, base);
+    }
+}
 
-    nmod_poly_mat_init(bin_vec, bits, len, mod);
-    nmod_poly_mat_zero(bin_vec);
+void evmlr_utils_ring_to_bin(nmod_poly_mat_t bin_vec, const nmod_poly_mat_t d_vec, int b) {
+    slong N = nmod_poly_mat_nrows(d_vec);
+    ulong q = nmod_poly_mat_modulus(d_vec);
+    slong mod = 2; // Output is binary
 
-    for (slong i = 0; i < len; i++) {
-        slong deg = fmpz_poly_degree(ring_vec[i]);
-        for (int j = 0; j < bits; j++) {
-            nmod_poly_fit_length(nmod_poly_mat_entry(bin_vec, j, i), deg + 1);
+    fmpz_t coeff_fmpz, two_pow_b;
+    fmpz_init(coeff_fmpz);
+    fmpz_init_set_ui(two_pow_b, 1);
+    fmpz_mul_2exp(two_pow_b, two_pow_b, b); // 2^b
+    ulong half_q = q / 2;
+
+    slong max_degree = 0;
+    for (slong i = 0; i < N; i++) {
+        const nmod_poly_struct* poly = nmod_poly_mat_entry(d_vec, i, 0);
+        if (nmod_poly_degree(poly) > max_degree) {
+            max_degree = nmod_poly_degree(poly);
         }
-        for (slong k = 0; k < deg; k++) {
-            fmpz_poly_get_coeff_fmpz(coeff, ring_vec[i], k);
-            // The range is [-2^(b-1), 2^(b-1)). If coeff is negative,
-            // its two's complement representation is 2^b + coeff.
-            if (fmpz_sgn(coeff) < 0) {
-                fmpz_add(coeff, coeff, two_pow_b); // Make coeff non-negative
+    }
+
+    // d_bits matrix will have b rows (one for each bit plane) and N columns
+    nmod_poly_mat_init(bin_vec, b, N, mod);
+    for(slong r=0; r < b; r++) {
+        for (slong c=0; c < N; c++) {
+            nmod_poly_init2(nmod_poly_mat_entry(bin_vec, r, c), max_degree + 1, mod);
+        }
+    }
+
+    for (slong i = 0; i < N; i++) { // For each polynomial in the input matrix
+        const nmod_poly_struct* d_poly = nmod_poly_mat_entry(d_vec, i, 0);
+        for (slong k = 0; k <= nmod_poly_degree(d_poly); k++) { // For each coefficient
+            ulong coeff_ui = nmod_poly_get_coeff_ui(d_poly, k);
+
+            // Normalize coefficient to signed range [-q/2, q/2)
+            fmpz_set_ui(coeff_fmpz, coeff_ui);
+            if (coeff_ui > half_q) {
+                fmpz_sub_ui(coeff_fmpz, coeff_fmpz, q);
             }
-            for (int j = 0; j < bits; j++) {
-                if (fmpz_tstbit(coeff, j)) {
-                    nmod_poly_set_coeff_ui(nmod_poly_mat_entry(bin_vec, j, i), k, 1);
+
+            // Two's complement logic
+            if (fmpz_sgn(coeff_fmpz) < 0) {
+                fmpz_add(coeff_fmpz, coeff_fmpz, two_pow_b);
+            }
+
+            for (int j = 0; j < b; j++) { // For each bit
+                if (fmpz_tstbit(coeff_fmpz, j)) {
+                    // d_bits[j][i]
+                    nmod_poly_struct* entry = nmod_poly_mat_entry(bin_vec, j, i);
+                    nmod_poly_set_coeff_ui(entry, k, 1);
                 }
             }
         }
     }
-
-    fmpz_clear(coeff);
-    fmpz_clear(two_pow_b_minus_1);
+    fmpz_clear(coeff_fmpz);
     fmpz_clear(two_pow_b);
 }
 
@@ -220,16 +256,43 @@ void evmlr_utils_sample_binary_poly_mat(nmod_poly_mat_t mat, slong degree, flint
     }
 }
 
-void nmod_poly_mat_mulmod(nmod_poly_mat_t res, const nmod_poly_mat_t mat1, const nmod_poly_mat_t mat2, const nmod_poly_t mod) {
-    nmod_poly_t one;
-    nmod_poly_init(one, mod->mod.n);
-    nmod_poly_one(one);
+void evmlr_utils_gadget_matrix(nmod_poly_mat_t G, slong N, int b, ulong mod) {
+    // The Gadget matrix has N rows and b*N columns.
+    slong G_cols = b * N;
+    nmod_poly_mat_init(G, N, G_cols, mod); // Initializes all entries to zero polynomials
 
+    // Iterate through each of the 'b' blocks
+    for (int j = 0; j < b; j++) {
+        ulong scalar;
+
+        // Determine the scalar for the current block
+        if (j < b - 1) {
+            // Scalar is 2^j for the first b-1 blocks
+            scalar = 1UL << j;
+        } else {
+            // Scalar is -2^(b-1) for the last block
+            ulong term = 1UL << (b - 1);
+            scalar = mod - term; // Represents -term in modular arithmetic
+        }
+
+        // Set only the diagonal entries for the current block, avoiding extra loops
+        for (slong i = 0; i < N; i++) {
+            slong current_col = j * N + i;
+            nmod_poly_struct* entry = nmod_poly_mat_entry(G, i, current_col);
+            nmod_poly_set_coeff_ui(entry, 0, scalar);
+        }
+    }
+}
+
+void nmod_poly_mat_mulmod(nmod_poly_mat_t res, const nmod_poly_mat_t mat1, const nmod_poly_mat_t mat2, const nmod_poly_t mod) {
     nmod_poly_mat_mul(res, mat1, mat2);
     for (slong i = 0; i < res->r; i++) {
         for (slong j = 0; j < res->c; j++) {
-            nmod_poly_mulmod(nmod_poly_mat_entry(res, i, j), nmod_poly_mat_entry(res, i, j), one, mod);
+            nmod_poly_rem(nmod_poly_mat_entry(res, i, j), nmod_poly_mat_entry(res, i, j), mod);
         }
     }
-    nmod_poly_clear(one);
+}
+
+nmod_poly_struct* nmod_poly_vec_entry(const nmod_poly_mat_t mat, slong i) {
+    return nmod_poly_mat_entry(mat, i, 0);
 }

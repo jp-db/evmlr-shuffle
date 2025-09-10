@@ -18,12 +18,11 @@ $(TARGETS): %: $(PREFIX)_%.bin
 	./$(word $(words $^), $^) # run last target (the binary)
 
 .SECONDEXPANSION: # makefile magic to expand and get the extra dependencies
-
-%.bin: $$($$*_EXTRA) %.c $(UTILS) $(TEST) $(BENCH)
+%.bin: %.c $$($$*_EXTRA) $(UTILS) $(TEST) $(BENCH)
 	$(CC) $(CFLAGS) -DMAIN $^ -o $@ $(LIBS)
 	chmod +x $@ # make executable
 
-%.o: $$($$*_EXTRA) %.c $(UTILS)
+%.o: %.c
 	$(CC) $(CFLAGS) -c $< -o $@ $(LIBS)
 
 clean:

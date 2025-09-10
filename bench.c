@@ -36,7 +36,6 @@ void bench_compute(int benches) {
 
 void bench_print() {
 	printf("%lld cycles\n", bench_total());
-	printf("\n");
 }
 
 unsigned long long bench_total() {

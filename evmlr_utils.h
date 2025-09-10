@@ -29,32 +29,37 @@ int evmlr_utils_is_mat_bin(const nmod_poly_mat_t mat);
  */
 void evmlr_utils_int_to_bin(nmod_poly_t poly, ulong n);
 
+void evmlr_utils_poly_decompose(nmod_poly_mat_t bin_vec, slong mat_col, const nmod_poly_t poly, int bits, int base);
+
 // R_q^N \times \N -> (R_q^N)^*. Binary decomposition of (a vector of) ring elements
 /**
  * Decomposes a vector of polynomials into b binary polynomial vectors.
- * @param len Length of the input array.
- * @param bits Number of bits for the binary decomposition.
  * @param bin_vec Output array of (nmod_poly_t *) vectors, size b.
  * @param ring_vec Input array of polynomials to be decomposed.
- * @param mod Modulus for the polynomials.
+ * @param b Number of bits for the binary decomposition.
  */
-void evmlr_utils_ring_to_bin(size_t len, int bits, nmod_poly_mat_t bin_vec, const fmpz_poly_t ring_vec[len], ulong mod);
+void evmlr_utils_ring_to_bin(nmod_poly_mat_t bin_vec, const nmod_poly_mat_t ring_vec, int b);
 
 /**
  * Stacks the binary vectors into a single vector.
- * @param len length of each binary vector
- * @param bits number of binary vectors
  * @param stack output stacked vector of length bits * len
  * @param bin_vec input binary vectors of size bits, each of length len
  * @param mod modulus for the polynomials
  */
 void evmlr_utils_stack(nmod_poly_mat_t stack, const nmod_poly_mat_t bin_vec, ulong mod);
 
-// TODO
-void evmlr_utils_gadget_matrix();
+/**
+ * Creates the Gadget matrix G of size N x (b*N) as defined in the paper.
+ * G = (I_N | 2*I_N | ... | -2^(b-1)*I_N)
+ *
+ * @param G         The output nmod_poly_mat_t matrix, must be uninitialized.
+ * @param N         The dimension of the identity matrix blocks.
+ * @param b         The number of blocks (bits for decomposition).
+ * @param mod       The modulus for the polynomial coefficients.
+ */
+void evmlr_utils_gadget_matrix(nmod_poly_mat_t G, slong N, int b, ulong mod);
 
 
-// B_\eta centered binomial distribution for some positive integer \eta
 /**
  * Sample from a centered binomial distribution with a given center.
  * @param center  The center of the binomial distribution, which is also the number of trials.
@@ -80,5 +85,6 @@ void evmlr_utils_new_perm(ulong* perm, size_t len);
 
 void nmod_poly_mat_mulmod(nmod_poly_mat_t res, const nmod_poly_mat_t mat1, const nmod_poly_mat_t mat2, const nmod_poly_t mod);
 
+nmod_poly_struct* nmod_poly_vec_entry(const nmod_poly_mat_t mat, slong i);
 
 #endif // EVMLR_SHUFFLE_EVMLR_UTILS_H

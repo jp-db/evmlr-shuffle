@@ -70,10 +70,10 @@ void evmlr_commit_clear(evmlr_commit_t com) {
     nmod_poly_mat_clear(com->c);
 }
 
-ulong nmod_poly_norm_sqr(const nmod_poly_t poly) {
-   ulong norm = 0;
+slong nmod_poly_norm_sqr(const nmod_poly_t poly) {
+   slong norm = 0;
    for (slong i = 0; i < nmod_poly_length(poly); i++) {
-         ulong coeff = nmod_poly_get_coeff_ui(poly, i);
+         slong coeff = nmod_poly_get_coeff_ui(poly, i);
          if (coeff > MOD_Q / 2) {
             coeff -= MOD_Q;
          }
