@@ -21,6 +21,24 @@ void evmlr_shuffle_ctx_clear(evmlr_shuffle_ctx_t ctx) {
     evmlr_hpke_ctx_clear(ctx->hpke_ctx);
 }
 
+void evmlr_proof_init(evmlr_shuffle_proof_t proof, const evmlr_shuffle_ctx_t ctx) {
+    nmod_poly_init(proof->alpha, MOD_Q);
+    nmod_poly_init(proof->beta, MOD_Q);
+    nmod_poly_init(proof->lambda, MOD_Q);
+    nmod_poly_init(proof->gamma, MOD_Q);
+    nmod_poly_mat_init(proof->u, ctx->N - 1, 1, MOD_Q);
+}
+
+void evmlr_proof_clear(evmlr_shuffle_proof_t proof, const evmlr_shuffle_ctx_t ctx) {
+    nmod_poly_clear(proof->alpha);
+    nmod_poly_clear(proof->beta);
+    nmod_poly_clear(proof->lambda);
+    nmod_poly_clear(proof->gamma);
+    nmod_poly_mat_clear(proof->u);
+    evmlr_commit_clear(proof->P);
+    evmlr_commit_clear(proof->W);
+}
+
 void evmlr_shuffle_sp_clear(evmlr_shuffle_sp_t sp, const evmlr_shuffle_ctx_t ctx) {
     free(sp->pi);
     nmod_poly_mat_clear(sp->r_D);
@@ -65,13 +83,13 @@ void calc_z_hat(nmod_poly_t z_hat, const nmod_poly_mat_t c_hat, const nmod_poly_
 
 void calc_h(nmod_poly_t h, const nmod_poly_t z, const nmod_poly_t bin_poly, const nmod_poly_t alpha, const nmod_poly_t beta, const nmod_poly_t cyclo_poly);
 
-void evmlr_shuffle_phase_2(nmod_poly_mat_t h, nmod_poly_mat_t h_hat, evmlr_commit_t W, nmod_poly_mat_t r_W,
+void evmlr_shuffle_phase_2(nmod_poly_mat_t h, nmod_poly_mat_t h_hat, evmlr_shuffle_proof_t proof, nmod_poly_mat_t r_W,
                            nmod_poly_mat_t Theta, nmod_poly_mat_t w_dagger[],
                            const nmod_poly_mat_t sigma, const evmlr_shuffle_ctx_t ctx, const evmlr_shuffle_sp_t sp,
-                           const evmlr_shuffle_pp_t pp, const nmod_poly_t alpha, const nmod_poly_t beta,
-                           const nmod_poly_t lambda, flint_rand_t state) {
+                           const evmlr_shuffle_pp_t pp, flint_rand_t state) {
     slong L = ctx->L;
     slong N = ctx->N;
+    nmod_poly_struct *alpha = proof->alpha, *beta = proof->beta, *lambda = proof->lambda;
 
     nmod_poly_mat_init(h, N, 1, MOD_Q);
     nmod_poly_mat_init(h_hat, N, 1, MOD_Q);
@@ -132,7 +150,7 @@ void evmlr_shuffle_phase_2(nmod_poly_mat_t h, nmod_poly_mat_t h_hat, evmlr_commi
     }
 
     evmlr_commit_sample_r(r_W);
-    evmlr_commit(W, w_flat, r_W, ctx->com_ctx);
+    evmlr_commit(proof->W, w_flat, r_W, ctx->com_ctx);
 
     // cleanup
     nmod_poly_clear(tmp);
@@ -143,8 +161,8 @@ void evmlr_shuffle_phase_2(nmod_poly_mat_t h, nmod_poly_mat_t h_hat, evmlr_commi
     nmod_poly_mat_clear(w_flat);
 }
 
-void evmlr_shuffle_phase_3(nmod_poly_mat_t u, const nmod_poly_mat_t h, const nmod_poly_mat_t h_hat, const nmod_poly_mat_t Theta,
-                           const nmod_poly_t gamma, const evmlr_shuffle_ctx_t ctx) {
+void evmlr_shuffle_phase_3(evmlr_shuffle_proof_t proof, const nmod_poly_mat_t h, const nmod_poly_mat_t h_hat,
+                           const nmod_poly_mat_t Theta, const evmlr_shuffle_ctx_t ctx) {
     slong N = ctx->N;
 
     // Temporary polynomials for calculations
@@ -153,13 +171,10 @@ void evmlr_shuffle_phase_3(nmod_poly_mat_t u, const nmod_poly_mat_t h, const nmo
     nmod_poly_init(tmp, MOD_Q);
 
     // Initialize the running product with gamma
-    nmod_poly_set(running_prod, gamma);
+    nmod_poly_set(running_prod, proof->gamma);
 
     // Loop to calculate u_1 through u_{N-1} (indexed 0 to N-2 in code)
-    nmod_poly_mat_init(u, N - 1, 1, MOD_Q);
     for (slong i = 0; i < N - 1; i++) {
-
-
         // h_hat[i] / h[i]
         nmod_poly_invmod(tmp, nmod_poly_vec_entry(h, i), ctx->com_ctx->cyclo_poly);
         nmod_poly_mulmod(tmp, nmod_poly_vec_entry(h_hat, i), tmp, ctx->com_ctx->cyclo_poly);
@@ -172,7 +187,7 @@ void evmlr_shuffle_phase_3(nmod_poly_mat_t u, const nmod_poly_mat_t h, const nmo
         else            nmod_poly_set(tmp, running_prod);
 
         // +- gamma * prod + Θ_i
-        nmod_poly_add(nmod_poly_vec_entry(u, i), tmp, nmod_poly_vec_entry(Theta, i));
+        nmod_poly_add(nmod_poly_vec_entry(proof->u, i), tmp, nmod_poly_vec_entry(Theta, i));
     }
 
     // Cleanup
@@ -181,11 +196,14 @@ void evmlr_shuffle_phase_3(nmod_poly_mat_t u, const nmod_poly_mat_t h, const nmo
 }
 
 // check if everything is correct. TEST code, not zero-knowledge
-int evmlr_shuffle_proof_ver(const nmod_poly_mat_t u, const nmod_poly_mat_t h, const nmod_poly_mat_t h_hat,
-                            const evmlr_commit_t W, const nmod_poly_mat_t r_W, nmod_poly_mat_t w_dagger[],
-                            const evmlr_commit_t P, const nmod_poly_mat_t r_P, const nmod_poly_mat_t sigma,
-                            const nmod_poly_t gamma, const evmlr_shuffle_ctx_t ctx, const evmlr_shuffle_sp_t sp,
-                            const evmlr_shuffle_pp_t pp) {
+int evmlr_shuffle_proof_ver(evmlr_shuffle_proof_t proof, const nmod_poly_mat_t h, const nmod_poly_mat_t h_hat,
+                            const nmod_poly_mat_t r_W, nmod_poly_mat_t w_dagger[], const nmod_poly_mat_t r_P,
+                            const nmod_poly_mat_t sigma, const evmlr_shuffle_ctx_t ctx,
+                            const evmlr_shuffle_sp_t sp, const evmlr_shuffle_pp_t pp) {
+    nmod_poly_struct *gamma = proof->gamma;
+    nmod_poly_mat_struct *u = proof->u;
+    evmlr_commit_struct *P = proof->P, *W = proof->W;
+
     nmod_poly_mat_t tmp1, tmp2;
     nmod_poly_mat_init(tmp1, 1, 1, MOD_Q);
     nmod_poly_mat_init(tmp2, 1, 1, MOD_Q);
@@ -354,55 +372,46 @@ void calc_h(nmod_poly_t h, const nmod_poly_t z, const nmod_poly_t bin_poly, cons
 }
 
 int evmlr_shuffle_run(evmlr_shuffle_sp_t sp, evmlr_shuffle_pp_t pp, const evmlr_shuffle_ctx_t ctx, flint_rand_t state) {
+    evmlr_shuffle_proof_t proof;
+    evmlr_proof_init(proof, ctx);
+
     size_t N = ctx->N;
-    evmlr_commit_t P;
     nmod_poly_mat_t sigma;
     nmod_poly_mat_t r_P;
-    evmlr_shuffle_phase_1(sigma, P, r_P, ctx, sp);
-
-    nmod_poly_t alpha, beta, lambda, gamma;
-    nmod_poly_init(alpha, MOD_Q);
-    nmod_poly_init(beta, MOD_Q);
-    nmod_poly_init(lambda, MOD_Q);
-    nmod_poly_init(gamma, MOD_Q);
-    evmlr_shuffle_sample_challenge(alpha, state);
-    evmlr_shuffle_sample_challenge(beta, state);
-    evmlr_shuffle_sample_challenge(lambda, state);
-    evmlr_shuffle_sample_challenge(gamma, state);
+    // Prover computes P, sigma, r_P
+    evmlr_shuffle_phase_1(sigma, proof->P, r_P, ctx, sp);
+    // Verifier samples challenges
+    evmlr_shuffle_sample_challenge(proof->alpha, state);
+    evmlr_shuffle_sample_challenge(proof->beta, state);
+    evmlr_shuffle_sample_challenge(proof->lambda, state);
 
     nmod_poly_mat_t h, h_hat;
-    evmlr_commit_t W;
     nmod_poly_mat_t r_W;
     nmod_poly_mat_t Theta;
     nmod_poly_mat_t w_dagger[N];
 
-    evmlr_shuffle_phase_2(h, h_hat, W, r_W, Theta, w_dagger, sigma, ctx, sp, pp, alpha, beta, lambda, state);
+    // Prover computes W, h, h_hat, Theta, w_dagger, r_W
+    evmlr_shuffle_phase_2(h, h_hat, proof, r_W, Theta, w_dagger, sigma, ctx, sp, pp, state);
+    // Verifier samples gamma
+    evmlr_shuffle_sample_challenge(proof->gamma, state);
 
-    nmod_poly_mat_t u;
-    evmlr_shuffle_phase_3(u, h, h_hat, Theta, gamma, ctx);
+    // Prover computes u
+    evmlr_shuffle_phase_3(proof, h, h_hat, Theta, ctx);
 
-    int valid = evmlr_shuffle_proof_ver(u, h, h_hat, W, r_W, w_dagger, P, r_P, sigma, gamma, ctx, sp, pp);
+    int valid = evmlr_shuffle_proof_ver(proof, h, h_hat, r_W, w_dagger, r_P, sigma, ctx, sp, pp);
 
     // cleanup
-    nmod_poly_clear(alpha);
-    nmod_poly_clear(beta);
-    nmod_poly_clear(lambda);
-    nmod_poly_clear(gamma);
-
-    evmlr_commit_clear(P);
+    evmlr_proof_clear(proof, ctx);
     nmod_poly_mat_clear(sigma);
     nmod_poly_mat_clear(r_P);
 
     nmod_poly_mat_clear(h);
     nmod_poly_mat_clear(h_hat);
-    evmlr_commit_clear(W);
     nmod_poly_mat_clear(r_W);
     nmod_poly_mat_clear(Theta);
     for (size_t i = 0; i < N; i++) {
         nmod_poly_mat_clear(w_dagger[i]);
     }
-
-    nmod_poly_mat_clear(u);
     return valid;
 
 }
@@ -491,7 +500,7 @@ void bench(evmlr_shuffle_ctx_t ctx, flint_rand_t state) {
 }
 
 int main() {
-    slong n_messages = 10;
+    slong n_messages = SHUFFLE_N_MSGS;
 
     flint_rand_t state;
     flint_rand_init(state);

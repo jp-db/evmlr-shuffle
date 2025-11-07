@@ -1,7 +1,6 @@
 #ifndef EVMLR_SHUFFLE_EVMLR_UTILS_H
 #define EVMLR_SHUFFLE_EVMLR_UTILS_H
 #include "evmlr_params.h"
-#include "flint/fmpz_poly.h" // for signed coefficients
 
 // 2 Preliminaries
 // 2.2 Polynomial Ring
