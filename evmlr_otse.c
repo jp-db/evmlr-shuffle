@@ -1,5 +1,6 @@
 #include "evmlr_otse.h"
 #include "evmlr_utils.h"
+#include "evmlr_crt.h"
 #include "flint/fmpz.h"
 #include "flint/fmpz_poly.h"
 #ifdef MAIN
@@ -33,9 +34,12 @@ void evmlr_otse_ctx_init(evmlr_otse_ctx_t ctx, slong L, flint_rand_t state) {
     nmod_poly_init(ctx->cyclo_poly, MOD_Q);
     nmod_poly_set_coeff_ui(ctx->cyclo_poly, DEGREE_N, 1);
     nmod_poly_set_coeff_ui(ctx->cyclo_poly, 0, 1);
+    
+    evmlr_crt_setup(ctx->crt_ctx, ctx->cyclo_poly);
 }
 
 void evmlr_otse_ctx_clear(evmlr_otse_ctx_t ctx) {
+    evmlr_crt_clear(ctx->crt_ctx);
     nmod_poly_mat_clear(ctx->H);
     nmod_poly_mat_clear(ctx->H_prime);
     nmod_poly_clear(ctx->cyclo_poly);
@@ -98,7 +102,7 @@ void round_poly(nmod_poly_t poly, const nmod_poly_t hs, const fmpz_t q1, const f
     fmpz_clear(half_q1);
 }
 
-void calc_d(nmod_poly_mat_t d, const nmod_poly_mat_t H, const nmod_poly_mat_t s, const nmod_poly_t cyclo_poly, slong L) {
+void calc_d(nmod_poly_mat_t d, const nmod_poly_mat_t H, const nmod_poly_mat_t s, const nmod_poly_t cyclo_poly, slong L, const evmlr_otse_ctx_t ctx) {
     // ⌈Hs⌋_{2^ζ →2^{2η}} := ⌈(Hs * 2^{2η})/2^ζ⌋ mod 2^{2η} := Hs * q2/q1 mod q2
     fmpz_t q1, q2;
     fmpz_init(q1);
@@ -108,7 +112,20 @@ void calc_d(nmod_poly_mat_t d, const nmod_poly_mat_t H, const nmod_poly_mat_t s,
 
     nmod_poly_mat_t Hs;
     nmod_poly_mat_init(Hs, K_LWE + L, 1, MOD_Q);
-    nmod_poly_mat_mulmod(Hs, H, s, cyclo_poly);
+
+    evmlr_poly_mat_crt_t crt_H, crt_s, crt_Hs;
+    evmlr_poly_mat_crt_init(crt_H, K_LWE + L, K_LWR, MOD_Q);
+    evmlr_poly_mat_crt_init(crt_s, K_LWR, 1, MOD_Q);
+    evmlr_poly_mat_crt_init(crt_Hs, K_LWE + L, 1, MOD_Q);
+
+    evmlr_poly_mat_to_crt(crt_H, H, ctx->crt_ctx);
+    evmlr_poly_mat_to_crt(crt_s, s, ctx->crt_ctx);
+    evmlr_poly_mat_crt_mul(crt_Hs, crt_H, crt_s, ctx->crt_ctx);
+    evmlr_poly_mat_from_crt(Hs, crt_Hs, ctx->crt_ctx);
+
+    evmlr_poly_mat_crt_clear(crt_H);
+    evmlr_poly_mat_crt_clear(crt_s);
+    evmlr_poly_mat_crt_clear(crt_Hs);
 
     // d = Hs * q2/q1 mod q2
     nmod_poly_mat_init(d, K_LWE + L, 1, MOD_Q);
@@ -146,7 +163,7 @@ void multiply_by_B_eta(nmod_poly_mat_t w, const nmod_poly_mat_t d, slong L, ulon
 
 void calc_a(nmod_poly_mat_t a, nmod_poly_mat_t d_dagger, const evmlr_otse_key_t key, const evmlr_otse_ctx_t ctx) {
     nmod_poly_mat_t d, d_bin;
-    calc_d(d, ctx->H, key->s, ctx->cyclo_poly, ctx->L); // d = ⌈Hs⌋_{2^ZETA →2^{2η}}
+    calc_d(d, ctx->H, key->s, ctx->cyclo_poly, ctx->L, ctx); // d = ⌈Hs⌋_{2^ZETA →2^{2η}}
     int bits = 2 * ETA;
     evmlr_utils_ring_to_bin(d_bin, d, bits);
 
@@ -168,8 +185,21 @@ void evmlr_calc_a(nmod_poly_mat_t a, const nmod_poly_mat_t d_stack, const evmlr_
     // w = B_eta stack(d)
     nmod_poly_mat_t w;
     multiply_by_B_eta(w, d_stack, ctx->L, MOD_Q);
+    
     // a = H' w
-    nmod_poly_mat_mulmod(a, ctx->H_prime, w, ctx->cyclo_poly);
+    evmlr_poly_mat_crt_t crt_H_prime, crt_w, crt_a;
+    evmlr_poly_mat_crt_init(crt_H_prime, ctx->L, K_LWE + ctx->L, MOD_Q);
+    evmlr_poly_mat_crt_init(crt_w, K_LWE + ctx->L, 1, MOD_Q);
+    evmlr_poly_mat_crt_init(crt_a, ctx->L, 1, MOD_Q);
+
+    evmlr_poly_mat_to_crt(crt_H_prime, ctx->H_prime, ctx->crt_ctx);
+    evmlr_poly_mat_to_crt(crt_w, w, ctx->crt_ctx);
+    evmlr_poly_mat_crt_mul(crt_a, crt_H_prime, crt_w, ctx->crt_ctx);
+    evmlr_poly_mat_from_crt(a, crt_a, ctx->crt_ctx);
+
+    evmlr_poly_mat_crt_clear(crt_H_prime);
+    evmlr_poly_mat_crt_clear(crt_w);
+    evmlr_poly_mat_crt_clear(crt_a);
     nmod_poly_mat_clear(w);
 }
 

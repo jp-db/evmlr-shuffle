@@ -1,5 +1,6 @@
 #include "evmlr_mlpke.h"
 #include "evmlr_utils.h"
+#include "evmlr_crt.h"
 #ifdef MAIN
 #include "test.h"
 #include "bench.h"
@@ -11,9 +12,12 @@ void evmlr_mlpke_ctx_init(evmlr_mlpke_ctx_t ctx) {
     // Initialize cyclotomic polynomial x^N + 1
     nmod_poly_set_coeff_ui(ctx->cyclo_poly, DEGREE_N, 1);
     nmod_poly_set_coeff_ui(ctx->cyclo_poly, 0, 1);
+    
+    evmlr_crt_setup(ctx->crt_ctx, ctx->cyclo_poly);
 }
 
 void evmlr_mlpke_ctx_clear(evmlr_mlpke_ctx_t ctx) {
+    evmlr_crt_clear(ctx->crt_ctx);
     nmod_poly_clear(ctx->cyclo_poly);
 }
 
@@ -33,7 +37,20 @@ void evmlr_mlpke_keypair_gen(evmlr_mlpke_keypair_t keypair, flint_rand_t state, 
     nmod_poly_mat_zero(keypair->pk->t);
 
     // Compute t = A * s + e
-    nmod_poly_mat_mulmod(keypair->pk->t, keypair->pk->A, keypair->sk->s, ctx->cyclo_poly);
+    evmlr_poly_mat_crt_t crt_A, crt_s, crt_t;
+    evmlr_poly_mat_crt_init(crt_A, K_LWE, K_LWE, MOD_Q);
+    evmlr_poly_mat_crt_init(crt_s, K_LWE, 1, MOD_Q);
+    evmlr_poly_mat_crt_init(crt_t, K_LWE, 1, MOD_Q);
+
+    evmlr_poly_mat_to_crt(crt_A, keypair->pk->A, ctx->crt_ctx);
+    evmlr_poly_mat_to_crt(crt_s, keypair->sk->s, ctx->crt_ctx);
+    evmlr_poly_mat_crt_mul(crt_t, crt_A, crt_s, ctx->crt_ctx);
+    evmlr_poly_mat_from_crt(keypair->pk->t, crt_t, ctx->crt_ctx);
+
+    evmlr_poly_mat_crt_clear(crt_A);
+    evmlr_poly_mat_crt_clear(crt_s);
+    evmlr_poly_mat_crt_clear(crt_t);
+
     nmod_poly_mat_add(keypair->pk->t, keypair->pk->t, e);
 
     nmod_poly_mat_clear(e);
@@ -63,7 +80,18 @@ void evmlr_mlpke_enc(evmlr_mlpke_cipher_t cipher, const nmod_poly_t msg, const e
 
     // Compute u^T = r^T A + e_2^T
     nmod_poly_mat_init(cipher->uT, 1, K_LWE, MOD_Q);
-    nmod_poly_mat_mulmod(cipher->uT, r, pk->A, ctx->cyclo_poly);
+    
+    evmlr_poly_mat_crt_t crt_r, crt_A, crt_uT;
+    evmlr_poly_mat_crt_init(crt_r, 1, K_LWE, MOD_Q);
+    evmlr_poly_mat_crt_init(crt_A, K_LWE, K_LWE, MOD_Q);
+    evmlr_poly_mat_crt_init(crt_uT, 1, K_LWE, MOD_Q);
+
+    evmlr_poly_mat_to_crt(crt_r, r, ctx->crt_ctx);
+    evmlr_poly_mat_to_crt(crt_A, pk->A, ctx->crt_ctx);
+    evmlr_poly_mat_crt_mul(crt_uT, crt_r, crt_A, ctx->crt_ctx);
+    evmlr_poly_mat_from_crt(cipher->uT, crt_uT, ctx->crt_ctx);
+
+    evmlr_poly_mat_crt_clear(crt_A);
     nmod_poly_mat_add(cipher->uT, cipher->uT, e2);
 
     nmod_poly_mat_init(tmp, 1, 1, MOD_Q);
@@ -72,7 +100,18 @@ void evmlr_mlpke_enc(evmlr_mlpke_cipher_t cipher, const nmod_poly_t msg, const e
     // Compute v = r^T t + e_3 + c * msg
     nmod_poly_init(cipher->v, MOD_Q);
 
-    nmod_poly_mat_mulmod(tmp, r, pk->t, ctx->cyclo_poly); // r^T t
+    evmlr_poly_mat_crt_t crt_t, crt_tmp;
+    evmlr_poly_mat_crt_init(crt_t, K_LWE, 1, MOD_Q);
+    evmlr_poly_mat_crt_init(crt_tmp, 1, 1, MOD_Q);
+
+    evmlr_poly_mat_to_crt(crt_t, pk->t, ctx->crt_ctx);
+    evmlr_poly_mat_crt_mul(crt_tmp, crt_r, crt_t, ctx->crt_ctx);
+    evmlr_poly_mat_from_crt(tmp, crt_tmp, ctx->crt_ctx);
+
+    evmlr_poly_mat_crt_clear(crt_r);
+    evmlr_poly_mat_crt_clear(crt_t);
+    evmlr_poly_mat_crt_clear(crt_uT);
+    evmlr_poly_mat_crt_clear(crt_tmp);
     nmod_poly_struct* poly = nmod_poly_mat_entry(tmp, 0, 0);
 
     nmod_poly_add(cipher->v, poly, e3); // + e_3
@@ -95,9 +134,21 @@ void evmlr_mlpke_dec(nmod_poly_t msg, const evmlr_mlpke_cipher_t cipher, const e
     nmod_poly_mat_init(tmp, 1, 1, MOD_Q);
     nmod_poly_set(m_tilde, cipher->v);
 
-    nmod_poly_mat_mul(tmp, cipher->uT, sk->s);
+    evmlr_poly_mat_crt_t crt_uT, crt_s, crt_tmp;
+    evmlr_poly_mat_crt_init(crt_uT, 1, K_LWE, MOD_Q);
+    evmlr_poly_mat_crt_init(crt_s, K_LWE, 1, MOD_Q);
+    evmlr_poly_mat_crt_init(crt_tmp, 1, 1, MOD_Q);
+
+    evmlr_poly_mat_to_crt(crt_uT, cipher->uT, ctx->crt_ctx);
+    evmlr_poly_mat_to_crt(crt_s, sk->s, ctx->crt_ctx);
+    evmlr_poly_mat_crt_mul(crt_tmp, crt_uT, crt_s, ctx->crt_ctx);
+    evmlr_poly_mat_from_crt(tmp, crt_tmp, ctx->crt_ctx);
+
+    evmlr_poly_mat_crt_clear(crt_uT);
+    evmlr_poly_mat_crt_clear(crt_s);
+    evmlr_poly_mat_crt_clear(crt_tmp);
+
     nmod_poly_struct* poly = nmod_poly_mat_entry(tmp, 0, 0);
-    nmod_poly_mulmod(poly, poly, one, ctx->cyclo_poly);
 
     nmod_poly_sub(m_tilde, m_tilde, poly);
 

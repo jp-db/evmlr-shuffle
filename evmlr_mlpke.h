@@ -1,9 +1,13 @@
 #ifndef EVMLR_SHUFFLE_EVMLR_MLPKE_H
 #define EVMLR_SHUFFLE_EVMLR_MLPKE_H
 #include "evmlr_params.h"
+#include "flint/nmod_poly_mat.h"
+#include "flint/flint.h"
+#include "evmlr_crt.h"
 
 typedef struct {
     nmod_poly_t cyclo_poly; // x^N + 1
+    evmlr_crt_ctx_t crt_ctx;
 } evmlr_mlpke_ctx_struct;
 typedef evmlr_mlpke_ctx_struct evmlr_mlpke_ctx_t[1];
 

@@ -1,9 +1,10 @@
 #ifndef EVMLR_SHUFFLE_EVMLR_COMMIT_H
 #define EVMLR_SHUFFLE_EVMLR_COMMIT_H
 #include "evmlr_params.h"
-
-// B := \sqrt{nL + n 2 K_SIS ETA^2}
-// public_parameters pp := (K_SIS, M_LEN, ETA, B, A_1, A_2)
+#include "flint/nmod_poly_mat.h"
+#include "flint/flint.h"
+#include "evmlr_params.h"
+#include "evmlr_crt.h"
 typedef struct {
     ulong b_sqr; // B^2
     slong N; // message length
@@ -11,6 +12,7 @@ typedef struct {
     nmod_poly_mat_t A_1;
     nmod_poly_mat_t A_2; // K_SIS x 2K_SIS matrix
     nmod_poly_t cyclo_poly; // x^N + 1
+    evmlr_crt_ctx_t crt_ctx;
 } evmlr_commit_ctx_struct;
 typedef evmlr_commit_ctx_struct evmlr_commit_ctx_t[1];
 

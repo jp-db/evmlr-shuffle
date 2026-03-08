@@ -1,5 +1,6 @@
 #include "evmlr_commit.h"
 #include "evmlr_utils.h"
+#include "evmlr_crt.h"
 #ifdef MAIN
 #include "test.h"
 #include "bench.h"
@@ -25,9 +26,12 @@ void evmlr_commit_ctx_init(evmlr_commit_ctx_t ctx, slong N, flint_rand_t state) 
     nmod_poly_init(ctx->cyclo_poly, MOD_Q);
     nmod_poly_set_coeff_ui(ctx->cyclo_poly, DEGREE_N, 1);
     nmod_poly_set_coeff_ui(ctx->cyclo_poly, 0, 1);
+    
+    evmlr_crt_setup(ctx->crt_ctx, ctx->cyclo_poly);
 }
 
 void evmlr_commit_ctx_clear(evmlr_commit_ctx_t ctx) {
+    evmlr_crt_clear(ctx->crt_ctx);
     nmod_poly_mat_clear(ctx->A_1);
     nmod_poly_mat_clear(ctx->A_2);
 }
@@ -41,29 +45,37 @@ void evmlr_commit(evmlr_commit_t com, const nmod_poly_mat_t msg, const nmod_poly
     // Initialize commitment polynomials
     nmod_poly_mat_init(com->c, K_SIS, 1, MOD_Q);
 
-    nmod_poly_mat_t tmp;
-    nmod_poly_mat_init(tmp, K_SIS, 1, MOD_Q);
-    nmod_poly_t one;
-    nmod_poly_init(one, MOD_Q);
-    nmod_poly_one(one);
+    evmlr_poly_mat_crt_t crt_A1, crt_msg, crt_A2, crt_r, crt_c, crt_tmp;
+    evmlr_poly_mat_crt_init(crt_A1, K_SIS, ctx->N, MOD_Q);
+    evmlr_poly_mat_crt_init(crt_msg, ctx->N, 1, MOD_Q);
+    evmlr_poly_mat_crt_init(crt_A2, K_SIS, 2 * K_SIS, MOD_Q);
+    evmlr_poly_mat_crt_init(crt_r, 2 * K_SIS, 1, MOD_Q);
+    evmlr_poly_mat_crt_init(crt_c, K_SIS, 1, MOD_Q);
+    evmlr_poly_mat_crt_init(crt_tmp, K_SIS, 1, MOD_Q);
 
     // Compute c = A_1 * msg + A_2 * r
-    nmod_poly_mat_mul(com->c, ctx->A_1, msg);
-    for (slong i = 0; i < K_SIS; i++) {
-        nmod_poly_struct* c_i = nmod_poly_mat_entry(com->c, i, 0);
-        nmod_poly_mulmod(c_i, c_i, one, ctx->cyclo_poly);
-    }
+    evmlr_poly_mat_to_crt(crt_A1, ctx->A_1, ctx->crt_ctx);
+    evmlr_poly_mat_to_crt(crt_msg, msg, ctx->crt_ctx);
+    evmlr_poly_mat_crt_mul(crt_c, crt_A1, crt_msg, ctx->crt_ctx);
+    evmlr_poly_mat_from_crt(com->c, crt_c, ctx->crt_ctx);
 
-    nmod_poly_mat_mul(tmp, ctx->A_2, r);
-    for (slong i = 0; i < K_SIS; i++) {
-        nmod_poly_struct* tmp_i = nmod_poly_mat_entry(tmp, i, 0);
-        nmod_poly_mulmod(tmp_i, tmp_i, one, ctx->cyclo_poly);
-    }
+    evmlr_poly_mat_to_crt(crt_A2, ctx->A_2, ctx->crt_ctx);
+    evmlr_poly_mat_to_crt(crt_r, r, ctx->crt_ctx);
+    evmlr_poly_mat_crt_mul(crt_tmp, crt_A2, crt_r, ctx->crt_ctx);
+
+    nmod_poly_mat_t tmp;
+    nmod_poly_mat_init(tmp, K_SIS, 1, MOD_Q);
+    evmlr_poly_mat_from_crt(tmp, crt_tmp, ctx->crt_ctx);
 
     nmod_poly_mat_add(com->c, com->c, tmp);
 
+    evmlr_poly_mat_crt_clear(crt_A1);
+    evmlr_poly_mat_crt_clear(crt_msg);
+    evmlr_poly_mat_crt_clear(crt_A2);
+    evmlr_poly_mat_crt_clear(crt_r);
+    evmlr_poly_mat_crt_clear(crt_c);
+    evmlr_poly_mat_crt_clear(crt_tmp);
     nmod_poly_mat_clear(tmp);
-    nmod_poly_clear(one);
 }
 
 void evmlr_commit_clear(evmlr_commit_t com) {

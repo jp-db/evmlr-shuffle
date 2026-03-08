@@ -1,12 +1,16 @@
 #ifndef EVMLR_SHUFFLE_EVMLR_OTSE_H
 #define EVMLR_SHUFFLE_EVMLR_OTSE_H
 #include "evmlr_params.h"
+#include "flint/nmod_poly_mat.h"
+#include "flint/flint.h"
+#include "evmlr_crt.h"
 
 typedef struct {
     slong L;
     nmod_poly_mat_t H; // H[K_LWE + M_LEN][K_LWR]
     nmod_poly_mat_t H_prime; // [M_LEN][K_LWE + M_LEN]
     nmod_poly_t cyclo_poly; // x^n + 1
+    evmlr_crt_ctx_t crt_ctx;
 } evmlr_otse_ctx_struct;
 typedef evmlr_otse_ctx_struct evmlr_otse_ctx_t[1];
 

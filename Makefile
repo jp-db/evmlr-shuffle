@@ -2,7 +2,7 @@ CC = gcc
 CFLAGS = -O3 -march=native -mtune=native -Wall -ggdb -pthread
 LIBS = -lflint -lgmp
 PREFIX = evmlr
-UTILS = $(PREFIX)_utils.c
+UTILS = $(PREFIX)_utils.c $(PREFIX)_crt.c
 BENCH = bench.c cpucycles.c
 TEST = test.c
 TARGETS = mlpke commit otse hpke shuffle
