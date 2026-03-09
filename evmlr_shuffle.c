@@ -1,5 +1,7 @@
 #include "evmlr_shuffle.h"
 #include "evmlr_utils.h"
+#include "sha.h"
+#include "fastrandombytes.h"
 
 #ifdef MAIN
 #include "test.h"
@@ -22,18 +24,10 @@ void evmlr_shuffle_ctx_clear(evmlr_shuffle_ctx_t ctx) {
 }
 
 void evmlr_proof_init(evmlr_shuffle_proof_t proof, const evmlr_shuffle_ctx_t ctx) {
-    nmod_poly_init(proof->alpha, MOD_Q);
-    nmod_poly_init(proof->beta, MOD_Q);
-    nmod_poly_init(proof->lambda, MOD_Q);
-    nmod_poly_init(proof->gamma, MOD_Q);
     nmod_poly_mat_init(proof->u, ctx->N - 1, 1, MOD_Q);
 }
 
 void evmlr_proof_clear(evmlr_shuffle_proof_t proof, const evmlr_shuffle_ctx_t ctx) {
-    nmod_poly_clear(proof->alpha);
-    nmod_poly_clear(proof->beta);
-    nmod_poly_clear(proof->lambda);
-    nmod_poly_clear(proof->gamma);
     nmod_poly_mat_clear(proof->u);
     evmlr_commit_clear(proof->P);
     evmlr_commit_clear(proof->W);
@@ -58,9 +52,66 @@ void evmlr_shuffle_pp_clear(evmlr_shuffle_pp_t pp, const evmlr_shuffle_ctx_t ctx
     free(pp->c_star);
 }
 
-void evmlr_shuffle_sample_challenge(nmod_poly_t chal, flint_rand_t state) {
-    nmod_poly_init(chal, MOD_Q);
-    nmod_poly_randtest(chal, state, DEGREE_N >> 1);
+static void sha256_update_mat(SHA256Context *sha, const nmod_poly_mat_t mat) {
+    for (slong i = 0; i < nmod_poly_mat_nrows(mat); i++) {
+        for (slong j = 0; j < nmod_poly_mat_ncols(mat); j++) {
+            nmod_poly_struct *poly = nmod_poly_mat_entry(mat, i, j);
+            for (slong c = 0; c < nmod_poly_length(poly); c++) {
+                ulong coeff = nmod_poly_get_coeff_ui(poly, c);
+                SHA256Input(sha, (const uint8_t *)&coeff, sizeof(ulong));
+            }
+        }
+    }
+}
+
+static void get_challenges_1(nmod_poly_t alpha, nmod_poly_t beta, nmod_poly_t lambda,
+                             const evmlr_shuffle_pp_t pp, const evmlr_commit_t P, const evmlr_shuffle_ctx_t ctx, uint8_t hash_out[SHA256HashSize]) {
+    SHA256Context sha;
+    SHA256Reset(&sha);
+    sha256_update_mat(&sha, pp->D->c);
+    for (slong i = 0; i < ctx->N; i++) {
+        sha256_update_mat(&sha, pp->c_hat[i]);
+        sha256_update_mat(&sha, pp->c_star[i]->c);
+    }
+    sha256_update_mat(&sha, P->c);
+    
+    SHA256Result(&sha, hash_out);
+    fastrandombytes_setseed(hash_out);
+    
+    ulong buf;
+    if (alpha) nmod_poly_zero(alpha);
+    for (int i = 0; i < (DEGREE_N >> 1); i++) {
+        fastrandombytes((unsigned char *)&buf, sizeof(buf));
+        if (alpha) nmod_poly_set_coeff_ui(alpha, i, buf % MOD_Q);
+    }
+    if (beta) nmod_poly_zero(beta);
+    for (int i = 0; i < (DEGREE_N >> 1); i++) {
+        fastrandombytes((unsigned char *)&buf, sizeof(buf));
+        if (beta) nmod_poly_set_coeff_ui(beta, i, buf % MOD_Q);
+    }
+    if (lambda) nmod_poly_zero(lambda);
+    for (int i = 0; i < (DEGREE_N >> 1); i++) {
+        fastrandombytes((unsigned char *)&buf, sizeof(buf));
+        if (lambda) nmod_poly_set_coeff_ui(lambda, i, buf % MOD_Q);
+    }
+}
+
+static void get_challenge_2(nmod_poly_t gamma, const uint8_t hash_in[SHA256HashSize], const evmlr_commit_t W) {
+    SHA256Context sha;
+    SHA256Reset(&sha);
+    SHA256Input(&sha, hash_in, SHA256HashSize);
+    sha256_update_mat(&sha, W->c);
+    
+    uint8_t hash_out[SHA256HashSize];
+    SHA256Result(&sha, hash_out);
+    fastrandombytes_setseed(hash_out);
+    
+    ulong buf;
+    if (gamma) nmod_poly_zero(gamma);
+    for (int i = 0; i < (DEGREE_N >> 1); i++) {
+        fastrandombytes((unsigned char *)&buf, sizeof(buf));
+        if (gamma) nmod_poly_set_coeff_ui(gamma, i, buf % MOD_Q);
+    }
 }
 
 void evmlr_shuffle_phase_1(nmod_poly_mat_t sigma, evmlr_commit_t com, nmod_poly_mat_t r, const evmlr_shuffle_ctx_t ctx, const evmlr_shuffle_sp_t sp) {
@@ -85,11 +136,10 @@ void calc_h(nmod_poly_t h, const nmod_poly_t z, const nmod_poly_t bin_poly, cons
 
 void evmlr_shuffle_phase_2(nmod_poly_mat_t h, nmod_poly_mat_t h_hat, evmlr_shuffle_proof_t proof, nmod_poly_mat_t r_W,
                            nmod_poly_mat_t Theta, nmod_poly_mat_t w_dagger[],
-                           const nmod_poly_mat_t sigma, const evmlr_shuffle_ctx_t ctx, const evmlr_shuffle_sp_t sp,
+                           const nmod_poly_mat_t sigma, const nmod_poly_t alpha, const nmod_poly_t beta, const nmod_poly_t lambda, const evmlr_shuffle_ctx_t ctx, const evmlr_shuffle_sp_t sp,
                            const evmlr_shuffle_pp_t pp, flint_rand_t state) {
     slong L = ctx->L;
     slong N = ctx->N;
-    nmod_poly_struct *alpha = proof->alpha, *beta = proof->beta, *lambda = proof->lambda;
 
     nmod_poly_mat_init(h, N, 1, MOD_Q);
     nmod_poly_mat_init(h_hat, N, 1, MOD_Q);
@@ -162,7 +212,7 @@ void evmlr_shuffle_phase_2(nmod_poly_mat_t h, nmod_poly_mat_t h_hat, evmlr_shuff
 }
 
 void evmlr_shuffle_phase_3(evmlr_shuffle_proof_t proof, const nmod_poly_mat_t h, const nmod_poly_mat_t h_hat,
-                           const nmod_poly_mat_t Theta, const evmlr_shuffle_ctx_t ctx) {
+                           const nmod_poly_mat_t Theta, const nmod_poly_t gamma, const evmlr_shuffle_ctx_t ctx) {
     slong N = ctx->N;
 
     // Temporary polynomials for calculations
@@ -171,7 +221,7 @@ void evmlr_shuffle_phase_3(evmlr_shuffle_proof_t proof, const nmod_poly_mat_t h,
     nmod_poly_init(tmp, MOD_Q);
 
     // Initialize the running product with gamma
-    nmod_poly_set(running_prod, proof->gamma);
+    nmod_poly_set(running_prod, gamma);
 
     // Loop to calculate u_1 through u_{N-1} (indexed 0 to N-2 in code)
     for (slong i = 0; i < N - 1; i++) {
@@ -200,7 +250,13 @@ int evmlr_shuffle_proof_ver(evmlr_shuffle_proof_t proof, const nmod_poly_mat_t h
                             const nmod_poly_mat_t r_W, nmod_poly_mat_t w_dagger[], const nmod_poly_mat_t r_P,
                             const nmod_poly_mat_t sigma, const evmlr_shuffle_ctx_t ctx,
                             const evmlr_shuffle_sp_t sp, const evmlr_shuffle_pp_t pp) {
-    nmod_poly_struct *gamma = proof->gamma;
+    
+    // Recompute gamma
+    uint8_t hash1[SHA256HashSize];
+    get_challenges_1(NULL, NULL, NULL, pp, proof->P, ctx, hash1);
+    nmod_poly_t gamma;
+    nmod_poly_init(gamma, MOD_Q);
+    get_challenge_2(gamma, hash1, proof->W);
     nmod_poly_mat_struct *u = proof->u;
     evmlr_commit_struct *P = proof->P, *W = proof->W;
 
@@ -296,6 +352,7 @@ int evmlr_shuffle_proof_ver(evmlr_shuffle_proof_t proof, const nmod_poly_mat_t h
         nmod_poly_mat_clear(tmp2);
         nmod_poly_mat_clear(G);
         nmod_poly_mat_clear(mat_flattened);
+        nmod_poly_clear(gamma);
         return valid;
 }
 
@@ -380,10 +437,15 @@ int evmlr_shuffle_run(evmlr_shuffle_sp_t sp, evmlr_shuffle_pp_t pp, const evmlr_
     nmod_poly_mat_t r_P;
     // Prover computes P, sigma, r_P
     evmlr_shuffle_phase_1(sigma, proof->P, r_P, ctx, sp);
-    // Verifier samples challenges
-    evmlr_shuffle_sample_challenge(proof->alpha, state);
-    evmlr_shuffle_sample_challenge(proof->beta, state);
-    evmlr_shuffle_sample_challenge(proof->lambda, state);
+
+    nmod_poly_t alpha, beta, lambda, gamma;
+    nmod_poly_init(alpha, MOD_Q);
+    nmod_poly_init(beta, MOD_Q);
+    nmod_poly_init(lambda, MOD_Q);
+    nmod_poly_init(gamma, MOD_Q);
+
+    uint8_t hash1[SHA256HashSize];
+    get_challenges_1(alpha, beta, lambda, pp, proof->P, ctx, hash1);
 
     nmod_poly_mat_t h, h_hat;
     nmod_poly_mat_t r_W;
@@ -391,16 +453,21 @@ int evmlr_shuffle_run(evmlr_shuffle_sp_t sp, evmlr_shuffle_pp_t pp, const evmlr_
     nmod_poly_mat_t w_dagger[N];
 
     // Prover computes W, h, h_hat, Theta, w_dagger, r_W
-    evmlr_shuffle_phase_2(h, h_hat, proof, r_W, Theta, w_dagger, sigma, ctx, sp, pp, state);
+    evmlr_shuffle_phase_2(h, h_hat, proof, r_W, Theta, w_dagger, sigma, alpha, beta, lambda, ctx, sp, pp, state);
+
     // Verifier samples gamma
-    evmlr_shuffle_sample_challenge(proof->gamma, state);
+    get_challenge_2(gamma, hash1, proof->W);
 
     // Prover computes u
-    evmlr_shuffle_phase_3(proof, h, h_hat, Theta, ctx);
+    evmlr_shuffle_phase_3(proof, h, h_hat, Theta, gamma, ctx);
 
     int valid = evmlr_shuffle_proof_ver(proof, h, h_hat, r_W, w_dagger, r_P, sigma, ctx, sp, pp);
 
     // cleanup
+    nmod_poly_clear(alpha);
+    nmod_poly_clear(beta);
+    nmod_poly_clear(lambda);
+    nmod_poly_clear(gamma);
     evmlr_proof_clear(proof, ctx);
     nmod_poly_mat_clear(sigma);
     nmod_poly_mat_clear(r_P);

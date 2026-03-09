@@ -5,10 +5,11 @@ PREFIX = evmlr
 UTILS = $(PREFIX)_utils.c
 BENCH = bench.c cpucycles.c
 TEST = test.c
-TARGETS = mlpke commit otse hpke shuffle
+TARGETS = mlpke commit otse hpke shuffle lin_proof
 
 $(PREFIX)_hpke_EXTRA = $(PREFIX)_otse.o $(PREFIX)_mlpke.o
-$(PREFIX)_shuffle_EXTRA = $(PREFIX)_hpke.o $(PREFIX)_commit.o $(PREFIX)_mlpke.o $(PREFIX)_otse.o
+$(PREFIX)_shuffle_EXTRA = $(PREFIX)_hpke.o $(PREFIX)_commit.o $(PREFIX)_mlpke.o $(PREFIX)_otse.o sha224-256.o fastrandombytes.o
+$(PREFIX)_lin_proof_EXTRA = sha224-256.o fastrandombytes.o
 
 .PHONY: all clean $(TARGETS)
 

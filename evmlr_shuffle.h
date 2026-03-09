@@ -28,7 +28,6 @@ typedef struct {
 typedef evmlr_shuffle_pp_struct evmlr_shuffle_pp_t[1];
 
 typedef struct {
-    nmod_poly_t alpha, beta, lambda, gamma; // random challenges
     evmlr_commit_t P, W; // commitments
     nmod_poly_mat_t u; // vector size N -1
 } evmlr_shuffle_proof_struct; // Proof
@@ -41,7 +40,5 @@ void evmlr_shuffle_ctx_clear(evmlr_shuffle_ctx_t ctx);
 void evmlr_proof_init(evmlr_shuffle_proof_t proof, const evmlr_shuffle_ctx_t ctx);
 
 void evmlr_proof_clear(evmlr_shuffle_proof_t proof, const evmlr_shuffle_ctx_t ctx);
-
-void evmlr_shuffle_sample_challenge(nmod_poly_t chal, flint_rand_t state);
 
 #endif //EVMLR_SHUFFLE_EVMLR_SHUFFLE_H
