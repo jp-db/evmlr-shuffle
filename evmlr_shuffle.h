@@ -4,6 +4,7 @@
 #include "evmlr_params.h"
 #include "evmlr_commit.h"
 #include "evmlr_hpke.h"
+#include "evmlr_lin_proof.h"
 
 typedef struct {
     evmlr_commit_ctx_t com_ctx;
@@ -30,6 +31,10 @@ typedef evmlr_shuffle_pp_struct evmlr_shuffle_pp_t[1];
 typedef struct {
     evmlr_commit_t P, W; // commitments
     nmod_poly_mat_t u; // vector size N -1
+    evmlr_lin_proof_t proof_D;
+    evmlr_lin_proof_t proof_P;
+    evmlr_lin_proof_t proof_W;
+    evmlr_lin_proof_t proof_u;
 } evmlr_shuffle_proof_struct; // Proof
 typedef evmlr_shuffle_proof_struct evmlr_shuffle_proof_t[1];
 
@@ -40,5 +45,9 @@ void evmlr_shuffle_ctx_clear(evmlr_shuffle_ctx_t ctx);
 void evmlr_proof_init(evmlr_shuffle_proof_t proof, const evmlr_shuffle_ctx_t ctx);
 
 void evmlr_proof_clear(evmlr_shuffle_proof_t proof, const evmlr_shuffle_ctx_t ctx);
+
+void evmlr_shuffle_prove(evmlr_shuffle_proof_t proof, const evmlr_shuffle_sp_t sp, const evmlr_shuffle_pp_t pp, const evmlr_shuffle_ctx_t ctx, flint_rand_t state);
+
+int evmlr_shuffle_verify(const evmlr_shuffle_proof_t proof, const evmlr_shuffle_ctx_t ctx, const evmlr_shuffle_pp_t pp);
 
 #endif //EVMLR_SHUFFLE_EVMLR_SHUFFLE_H
