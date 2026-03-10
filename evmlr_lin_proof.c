@@ -153,11 +153,7 @@ int evmlr_lin_verify(const evmlr_lin_proof_t proof,
     }
 
     // Compute lhs = A z_1 + z_2
-    nmod_poly_mat_mul(lhs, A, proof->z_1);
-    for (slong i = 0; i < ctx->k; i++) {
-        nmod_poly_struct* lhs_i = nmod_poly_mat_entry(lhs, i, 0);
-        nmod_poly_mulmod(lhs_i, lhs_i, one, ctx->cyclo_poly);
-    }
+    nmod_poly_mat_mulmod(lhs, A, proof->z_1, ctx->cyclo_poly);
     nmod_poly_mat_add(lhs, lhs, proof->z_2);
 
     // Compute c t
@@ -204,11 +200,7 @@ void test(evmlr_lin_proof_ctx_t ctx, flint_rand_t state) {
     nmod_poly_init(one, MOD_Q);
     nmod_poly_one(one);
 
-    nmod_poly_mat_mul(t, A, s_1);
-    for (slong i = 0; i < ctx->k; i++) {
-        nmod_poly_struct* t_i = nmod_poly_mat_entry(t, i, 0);
-        nmod_poly_mulmod(t_i, t_i, one, ctx->cyclo_poly);
-    }
+    nmod_poly_mat_mulmod(t, A, s_1, ctx->cyclo_poly);
     nmod_poly_mat_add(t, t, s_2);
 
     evmlr_lin_proof_init(proof, ctx);
@@ -228,6 +220,44 @@ void test(evmlr_lin_proof_ctx_t ctx, flint_rand_t state) {
     evmlr_lin_proof_clear(proof);
 }
 
+void bench(evmlr_lin_proof_ctx_t ctx, flint_rand_t state) {
+    nmod_poly_mat_t A, s_1, s_2, t;
+    evmlr_lin_proof_t proof;
+
+    nmod_poly_mat_init(A, ctx->k, ctx->m, MOD_Q);
+    nmod_poly_mat_init(s_1, ctx->m, 1, MOD_Q);
+    nmod_poly_mat_init(s_2, ctx->k, 1, MOD_Q);
+    nmod_poly_mat_init(t, ctx->k, 1, MOD_Q);
+
+    nmod_poly_mat_randtest(A, state, DEGREE_N);
+    evmlr_utils_binom_sample_mat_ring(s_1, ETA);
+    evmlr_utils_binom_sample_mat_ring(s_2, ETA);
+
+    nmod_poly_t one;
+    nmod_poly_init(one, MOD_Q);
+    nmod_poly_one(one);
+
+    nmod_poly_mat_mulmod(t, A, s_1, ctx->cyclo_poly);
+    nmod_poly_mat_add(t, t, s_2);
+
+    evmlr_lin_proof_init(proof, ctx);
+
+    BENCH_BEGIN("Linear equation proof generation") {
+        BENCH_ADD(evmlr_lin_prove(proof, A, s_1, s_2, t, ctx));
+    } BENCH_END;
+
+    BENCH_BEGIN("Linear equation proof verification") {
+        BENCH_ADD(evmlr_lin_verify(proof, A, t, ctx));
+    } BENCH_END;
+
+    nmod_poly_clear(one);
+    nmod_poly_mat_clear(A);
+    nmod_poly_mat_clear(s_1);
+    nmod_poly_mat_clear(s_2);
+    nmod_poly_mat_clear(t);
+    evmlr_lin_proof_clear(proof);
+}
+
 int main() {
     flint_rand_t state;
     flint_rand_init(state);
@@ -239,6 +269,7 @@ int main() {
     evmlr_lin_proof_ctx_init(ctx, K_LWE, K_SIS); // Just some sample dimensions for testing
 
     test(ctx, state);
+    bench(ctx, state);
 
     evmlr_lin_proof_ctx_clear(ctx);
     flint_rand_clear(state);
