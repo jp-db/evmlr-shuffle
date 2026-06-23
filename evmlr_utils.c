@@ -296,3 +296,98 @@ void nmod_poly_mat_mulmod(nmod_poly_mat_t res, const nmod_poly_mat_t mat1, const
 nmod_poly_struct* nmod_poly_vec_entry(const nmod_poly_mat_t mat, slong i) {
     return nmod_poly_mat_entry(mat, i, 0);
 }
+
+static ulong evmlr_highs_scalar(ulong x) {
+    long r0 = x % 259;
+    if (r0 > 129) r0 -= 259;
+    long r1 = (x - r0) / 259;
+    if (r1 == 12) r1 = 0;
+    return (r1 * 259) % 3109;
+}
+
+static ulong evmlr_lows_scalar(ulong x) {
+    return (x + 3109 - evmlr_highs_scalar(x)) % 3109;
+}
+
+static int evmlr_make_hint_scalar(ulong z, ulong ct0) {
+    ulong z_minus_ct0 = (z + MOD_Q - (ct0 % MOD_Q)) % MOD_Q;
+    return evmlr_highs_scalar(z) != evmlr_highs_scalar(z_minus_ct0);
+}
+
+static ulong evmlr_use_hint_scalar(int hint, ulong x) {
+    if (hint == 0) return evmlr_highs_scalar(x);
+    long r0 = x % 259;
+    if (r0 > 129) r0 -= 259;
+    long r1 = (x - r0) / 259;
+    if (r0 > 0) return ((r1 + 1) % 12) * 259;
+    return ((r1 + 11) % 12) * 259; // r1 - 1 mod 12
+}
+
+void evmlr_utils_highs_mat(nmod_poly_mat_t out, const nmod_poly_mat_t in) {
+    for (slong i = 0; i < in->r; i++) {
+        for (slong j = 0; j < in->c; j++) {
+            nmod_poly_struct* src = nmod_poly_mat_entry(in, i, j);
+            nmod_poly_struct* dst = nmod_poly_mat_entry(out, i, j);
+            nmod_poly_zero(dst);
+            for (slong k = 0; k <= nmod_poly_degree(src); k++) {
+                ulong val = nmod_poly_get_coeff_ui(src, k);
+                nmod_poly_set_coeff_ui(dst, k, evmlr_highs_scalar(val));
+            }
+        }
+    }
+}
+
+void evmlr_utils_lows_mat(nmod_poly_mat_t out, const nmod_poly_mat_t in) {
+    for (slong i = 0; i < in->r; i++) {
+        for (slong j = 0; j < in->c; j++) {
+            nmod_poly_struct* src = nmod_poly_mat_entry(in, i, j);
+            nmod_poly_struct* dst = nmod_poly_mat_entry(out, i, j);
+            nmod_poly_zero(dst);
+            for (slong k = 0; k <= nmod_poly_degree(src); k++) {
+                ulong val = nmod_poly_get_coeff_ui(src, k);
+                nmod_poly_set_coeff_ui(dst, k, evmlr_lows_scalar(val));
+            }
+        }
+    }
+}
+
+void evmlr_utils_make_hint_mat(nmod_poly_mat_t h, const nmod_poly_mat_t z, const nmod_poly_mat_t ct0) {
+    for (slong i = 0; i < z->r; i++) {
+        for (slong j = 0; j < z->c; j++) {
+            nmod_poly_struct* p_z = nmod_poly_mat_entry(z, i, j);
+            nmod_poly_struct* p_ct0 = nmod_poly_mat_entry(ct0, i, j);
+            nmod_poly_struct* p_h = nmod_poly_mat_entry(h, i, j);
+            nmod_poly_zero(p_h);
+            
+            slong deg = nmod_poly_degree(p_z) > nmod_poly_degree(p_ct0) ? nmod_poly_degree(p_z) : nmod_poly_degree(p_ct0);
+            
+            for (slong k = 0; k <= deg; k++) {
+                ulong val_z = nmod_poly_get_coeff_ui(p_z, k);
+                ulong val_ct0 = nmod_poly_get_coeff_ui(p_ct0, k);
+                int hint = evmlr_make_hint_scalar(val_z, val_ct0);
+                nmod_poly_set_coeff_ui(p_h, k, hint);
+            }
+        }
+    }
+}
+
+void evmlr_utils_use_hint_mat(nmod_poly_mat_t out, const nmod_poly_mat_t h, const nmod_poly_mat_t z) {
+    for (slong i = 0; i < z->r; i++) {
+        for (slong j = 0; j < z->c; j++) {
+            nmod_poly_struct* p_h = nmod_poly_mat_entry(h, i, j);
+            nmod_poly_struct* p_z = nmod_poly_mat_entry(z, i, j);
+            nmod_poly_struct* p_out = nmod_poly_mat_entry(out, i, j);
+            nmod_poly_zero(p_out);
+            
+            slong deg = nmod_poly_degree(p_h) > nmod_poly_degree(p_z) ? nmod_poly_degree(p_h) : nmod_poly_degree(p_z);
+            
+            for (slong k = 0; k <= deg; k++) {
+                int hint = nmod_poly_get_coeff_ui(p_h, k);
+                ulong val_z = nmod_poly_get_coeff_ui(p_z, k);
+                ulong res = evmlr_use_hint_scalar(hint, val_z);
+                nmod_poly_set_coeff_ui(p_out, k, res);
+            }
+        }
+    }
+}
+
