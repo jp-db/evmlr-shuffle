@@ -28,12 +28,12 @@ void evmlr_shuffle_ctx_clear(evmlr_shuffle_ctx_t ctx) {
 void evmlr_proof_init(evmlr_shuffle_proof_t proof, const evmlr_shuffle_ctx_t ctx) {
     nmod_poly_mat_init(proof->u, ctx->N - 1, 1, MOD_Q);
 
-    evmlr_lin_proof_ctx_t ctx_com;
-    evmlr_lin_proof_ctx_init(ctx_com, K_SIS, ctx->com_ctx->N + 2 * K_SIS);
-    evmlr_lin_proof_init(proof->proof_D, ctx_com);
-    evmlr_lin_proof_init(proof->proof_P, ctx_com);
-    evmlr_lin_proof_init(proof->proof_W, ctx_com);
-    evmlr_lin_proof_ctx_clear(ctx_com);
+    evmlr_bin_proof_ctx_t ctx_com;
+    evmlr_bin_proof_ctx_init(ctx_com, K_SIS, 2 * K_SIS, ctx->com_ctx->N);
+    evmlr_bin_proof_init(proof->proof_D, ctx_com);
+    evmlr_bin_proof_init(proof->proof_P, ctx_com);
+    evmlr_bin_proof_init(proof->proof_W, ctx_com);
+    evmlr_bin_proof_ctx_clear(ctx_com);
 
     evmlr_lin_proof_ctx_t ctx_u;
     evmlr_lin_proof_ctx_init(ctx_u, ctx->N, ctx->N * (LOG_Q_CEIL + 1 + 2*ETA*(K_LWE + ctx->L)));
@@ -46,9 +46,9 @@ void evmlr_proof_clear(evmlr_shuffle_proof_t proof, const evmlr_shuffle_ctx_t ct
     evmlr_commit_clear(proof->P);
     evmlr_commit_clear(proof->W);
 
-    evmlr_lin_proof_clear(proof->proof_D);
-    evmlr_lin_proof_clear(proof->proof_P);
-    evmlr_lin_proof_clear(proof->proof_W);
+    evmlr_bin_proof_clear(proof->proof_D);
+    evmlr_bin_proof_clear(proof->proof_P);
+    evmlr_bin_proof_clear(proof->proof_W);
     evmlr_lin_proof_clear(proof->proof_u);
 }
 
@@ -133,47 +133,22 @@ static void get_challenge_2(nmod_poly_t gamma, const uint8_t hash_in[SHA256HashS
     }
 }
 
-static void prove_commit(evmlr_lin_proof_t lin_proof, const evmlr_commit_ctx_t com_ctx, const nmod_poly_mat_t m, const nmod_poly_mat_t r, const nmod_poly_mat_t c) {
-    evmlr_lin_proof_ctx_t ctx;
-    evmlr_lin_proof_ctx_init(ctx, K_SIS, com_ctx->N + 2 * K_SIS);
+static void prove_commit(evmlr_bin_proof_t proof, const evmlr_commit_ctx_t com_ctx, const nmod_poly_mat_t m, const nmod_poly_mat_t r, const nmod_poly_mat_t c, flint_rand_t state) {
+    evmlr_bin_proof_ctx_t ctx;
+    evmlr_bin_proof_ctx_init(ctx, K_SIS, 2 * K_SIS, com_ctx->N);
 
-    nmod_poly_mat_t A, s1, s2;
-    nmod_poly_mat_init(A, ctx->k, ctx->m, MOD_Q);
-    for(int i=0; i<ctx->k; i++) {
-        for(int j=0; j<nmod_poly_mat_ncols(com_ctx->A_1); j++) nmod_poly_set(nmod_poly_mat_entry(A, i, j), nmod_poly_mat_entry(com_ctx->A_1, i, j));
-        for(int j=0; j<nmod_poly_mat_ncols(com_ctx->A_2); j++) nmod_poly_set(nmod_poly_mat_entry(A, i, j + nmod_poly_mat_ncols(com_ctx->A_1)), nmod_poly_mat_entry(com_ctx->A_2, i, j));
-    }
+    evmlr_bin_prove(proof, com_ctx->A_1, com_ctx->A_2, m, r, c, ctx, state);
 
-    nmod_poly_mat_init(s1, ctx->m, 1, MOD_Q);
-    for(int i=0; i<nmod_poly_mat_nrows(m); i++) nmod_poly_set(nmod_poly_mat_entry(s1, i, 0), nmod_poly_mat_entry(m, i, 0));
-    for(int i=0; i<nmod_poly_mat_nrows(r); i++) nmod_poly_set(nmod_poly_mat_entry(s1, i + nmod_poly_mat_nrows(m), 0), nmod_poly_mat_entry(r, i, 0));
-
-    nmod_poly_mat_init(s2, ctx->k, 1, MOD_Q);
-    nmod_poly_mat_zero(s2);
-
-    evmlr_lin_prove(lin_proof, A, s1, s2, c, ctx);
-
-    nmod_poly_mat_clear(A);
-    nmod_poly_mat_clear(s1);
-    nmod_poly_mat_clear(s2);
-    evmlr_lin_proof_ctx_clear(ctx);
+    evmlr_bin_proof_ctx_clear(ctx);
 }
 
-static int verify_commit(const evmlr_lin_proof_t lin_proof, const evmlr_commit_ctx_t com_ctx, const nmod_poly_mat_t c) {
-    evmlr_lin_proof_ctx_t ctx;
-    evmlr_lin_proof_ctx_init(ctx, K_SIS, com_ctx->N + 2 * K_SIS);
+static int verify_commit(const evmlr_bin_proof_t proof, const evmlr_commit_ctx_t com_ctx, const nmod_poly_mat_t c) {
+    evmlr_bin_proof_ctx_t ctx;
+    evmlr_bin_proof_ctx_init(ctx, K_SIS, 2 * K_SIS, com_ctx->N);
 
-    nmod_poly_mat_t A;
-    nmod_poly_mat_init(A, ctx->k, ctx->m, MOD_Q);
-    for(int i=0; i<ctx->k; i++) {
-        for(int j=0; j<nmod_poly_mat_ncols(com_ctx->A_1); j++) nmod_poly_set(nmod_poly_mat_entry(A, i, j), nmod_poly_mat_entry(com_ctx->A_1, i, j));
-        for(int j=0; j<nmod_poly_mat_ncols(com_ctx->A_2); j++) nmod_poly_set(nmod_poly_mat_entry(A, i, j + nmod_poly_mat_ncols(com_ctx->A_1)), nmod_poly_mat_entry(com_ctx->A_2, i, j));
-    }
+    int valid = evmlr_bin_verify(proof, com_ctx->A_1, com_ctx->A_2, c, ctx);
 
-    int valid = evmlr_lin_verify(lin_proof, A, c, ctx);
-
-    nmod_poly_mat_clear(A);
-    evmlr_lin_proof_ctx_clear(ctx);
+    evmlr_bin_proof_ctx_clear(ctx);
     return valid;
 }
 
@@ -628,10 +603,10 @@ void evmlr_shuffle_prove(evmlr_shuffle_proof_t proof, const evmlr_shuffle_sp_t s
             nmod_poly_set(poly, d_dag_ij);
         }
     }
-    prove_commit(proof->proof_D, ctx->com_ctx, d_flat, sp->r_D, pp->D->c);
+    prove_commit(proof->proof_D, ctx->com_ctx, d_flat, sp->r_D, pp->D->c, state);
     nmod_poly_mat_clear(d_flat);
 
-    prove_commit(proof->proof_P, ctx->com_ctx, sigma, r_P, proof->P->c);
+    prove_commit(proof->proof_P, ctx->com_ctx, sigma, r_P, proof->P->c, state);
 
     nmod_poly_mat_t w_flat;
     nmod_poly_mat_init(w_flat, ctx->com_ctx->N, 1, MOD_Q);
@@ -642,7 +617,7 @@ void evmlr_shuffle_prove(evmlr_shuffle_proof_t proof, const evmlr_shuffle_sp_t s
             nmod_poly_set(nmod_poly_vec_entry(w_flat, i * LOG_Q_CEIL + j), w_poly);
         }
     }
-    prove_commit(proof->proof_W, ctx->com_ctx, w_flat, r_W, proof->W->c);
+    prove_commit(proof->proof_W, ctx->com_ctx, w_flat, r_W, proof->W->c, state);
     nmod_poly_mat_clear(w_flat);
 
     // Prover compute proof u

@@ -5,6 +5,7 @@
 #include "evmlr_commit.h"
 #include "evmlr_hpke.h"
 #include "evmlr_lin_proof.h"
+#include "evmlr_bin_proof.h"
 
 typedef struct {
     evmlr_commit_ctx_t com_ctx;
@@ -31,9 +32,9 @@ typedef evmlr_shuffle_pp_struct evmlr_shuffle_pp_t[1];
 typedef struct {
     evmlr_commit_t P, W; // commitments
     nmod_poly_mat_t u; // vector size N -1
-    evmlr_lin_proof_t proof_D;
-    evmlr_lin_proof_t proof_P;
-    evmlr_lin_proof_t proof_W;
+    evmlr_bin_proof_t proof_D;
+    evmlr_bin_proof_t proof_P;
+    evmlr_bin_proof_t proof_W;
     evmlr_lin_proof_t proof_u;
 } evmlr_shuffle_proof_struct; // Proof
 typedef evmlr_shuffle_proof_struct evmlr_shuffle_proof_t[1];
