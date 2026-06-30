@@ -7,10 +7,21 @@
 #include "evmlr_params.h"
 
 // Context for the linear proof: A s_1 + s_2 = t
-typedef struct {
+struct evmlr_lin_proof_ctx_struct;
+
+typedef void (*mask_sampler_t)(nmod_poly_mat_t y, const struct evmlr_lin_proof_ctx_struct* ctx);
+typedef int (*rejection_check_t)(const nmod_poly_mat_t z_1, const nmod_poly_mat_t z_2, const struct evmlr_lin_proof_ctx_struct* ctx);
+typedef int (*norm_check_t)(const nmod_poly_mat_t z_1, const nmod_poly_mat_t z_2, const struct evmlr_lin_proof_ctx_struct* ctx);
+
+typedef struct evmlr_lin_proof_ctx_struct {
     slong k;
     slong m;
     nmod_poly_t cyclo_poly;
+    slong eta;
+    slong beta;
+    mask_sampler_t sample_mask;
+    rejection_check_t rejection_check;
+    norm_check_t norm_check;
 } evmlr_lin_proof_ctx_struct;
 
 typedef evmlr_lin_proof_ctx_struct evmlr_lin_proof_ctx_t[1];
@@ -62,5 +73,7 @@ int evmlr_lin_verify(const evmlr_lin_proof_t proof,
                      const nmod_poly_mat_t A, 
                      const nmod_poly_mat_t t, 
                      const evmlr_lin_proof_ctx_t ctx);
+
+void evmlr_lin_proof_ctx_set_linear(evmlr_lin_proof_ctx_t ctx, slong beta);
 
 #endif // EVMLR_SHUFFLE_EVMLR_LIN_PROOF_H

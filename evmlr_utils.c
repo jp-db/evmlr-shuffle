@@ -391,3 +391,66 @@ void evmlr_utils_use_hint_mat(nmod_poly_mat_t out, const nmod_poly_mat_t h, cons
     }
 }
 
+void evmlr_utils_linear_sample_mat_ring(nmod_poly_mat_t mat, slong beta) {
+    slong nrows = nmod_poly_mat_nrows(mat);
+    slong ncols = nmod_poly_mat_ncols(mat);
+    if (beta <= 0) {
+        for (slong i = 0; i < nrows; i++) {
+            for (slong j = 0; j < ncols; j++) {
+                nmod_poly_zero(nmod_poly_mat_entry(mat, i, j));
+            }
+        }
+        return;
+    }
+    
+    slong total_coeffs = nrows * ncols * DEGREE_N;
+    uint32_t* buff = (uint32_t*) malloc(total_coeffs * sizeof(uint32_t));
+    getrandom(buff, total_coeffs * sizeof(uint32_t), 0);
+    
+    slong coeff_idx = 0;
+    slong range = 2 * beta + 1;
+    for (slong i = 0; i < nrows; i++) {
+        for (slong j = 0; j < ncols; j++) {
+            nmod_poly_struct* poly = nmod_poly_mat_entry(mat, i, j);
+            nmod_poly_zero(poly);
+            for (slong c = 0; c < DEGREE_N; c++) {
+                uint32_t rand_val = buff[coeff_idx++];
+                slong val = (slong)(rand_val % range) - beta;
+                ulong coeff_mod;
+                if (val < 0) {
+                    coeff_mod = MOD_Q + val;
+                } else {
+                    coeff_mod = val;
+                }
+                nmod_poly_set_coeff_ui(poly, c, coeff_mod);
+            }
+        }
+    }
+    free(buff);
+}
+
+int evmlr_utils_is_bounded(const nmod_poly_mat_t mat, slong beta) {
+    slong nrows = nmod_poly_mat_nrows(mat);
+    slong ncols = nmod_poly_mat_ncols(mat);
+    for (slong i = 0; i < nrows; i++) {
+        for (slong j = 0; j < ncols; j++) {
+            const nmod_poly_struct* poly = nmod_poly_mat_entry(mat, i, j);
+            slong len = nmod_poly_length(poly);
+            for (slong c = 0; c < len; c++) {
+                ulong coeff = nmod_poly_get_coeff_ui(poly, c);
+                slong val;
+                if (coeff > MOD_Q / 2) {
+                    val = (slong)coeff - MOD_Q;
+                } else {
+                    val = (slong)coeff;
+                }
+                if (val < -beta || val > beta) {
+                    return 0; // Out of bounds
+                }
+            }
+        }
+    }
+    return 1; // All coefficients are in [-beta, beta]
+}
+
+

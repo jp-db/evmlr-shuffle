@@ -94,4 +94,7 @@ void nmod_poly_mat_mulmod(nmod_poly_mat_t res, const nmod_poly_mat_t mat1, const
 
 nmod_poly_struct* nmod_poly_vec_entry(const nmod_poly_mat_t mat, slong i);
 
+void evmlr_utils_linear_sample_mat_ring(nmod_poly_mat_t mat, slong beta);
+int evmlr_utils_is_bounded(const nmod_poly_mat_t mat, slong beta);
+
 #endif // EVMLR_SHUFFLE_EVMLR_UTILS_H

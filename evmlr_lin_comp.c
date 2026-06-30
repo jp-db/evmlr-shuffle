@@ -3,12 +3,51 @@
 #include "sha.h"
 #include "fastrandombytes.h"
 
+static void evmlr_lin_sample_mask_binomial(nmod_poly_mat_t y, const struct evmlr_lin_proof_ctx_struct* ctx) {
+    evmlr_utils_binom_sample_mat_ring(y, ctx->eta);
+}
+
+static int evmlr_lin_rejection_check_binomial(const nmod_poly_mat_t z_1, const nmod_poly_mat_t z_2, const struct evmlr_lin_proof_ctx_struct* ctx) {
+    return 1;
+}
+
+static int evmlr_lin_norm_check_binomial(const nmod_poly_mat_t z_1, const nmod_poly_mat_t z_2, const struct evmlr_lin_proof_ctx_struct* ctx) {
+    return 1;
+}
+
+static void evmlr_lin_sample_mask_linear(nmod_poly_mat_t y, const struct evmlr_lin_proof_ctx_struct* ctx) {
+    evmlr_utils_linear_sample_mat_ring(y, ctx->beta);
+}
+
+static int evmlr_lin_rejection_check_linear(const nmod_poly_mat_t z_1, const nmod_poly_mat_t z_2, const struct evmlr_lin_proof_ctx_struct* ctx) {
+    if (!evmlr_utils_is_bounded(z_1, ctx->beta)) return 0;
+    if (z_2 != NULL && !evmlr_utils_is_bounded(z_2, ctx->beta)) return 0;
+    return 1;
+}
+
+static int evmlr_lin_norm_check_linear(const nmod_poly_mat_t z_1, const nmod_poly_mat_t z_2, const struct evmlr_lin_proof_ctx_struct* ctx) {
+    return evmlr_lin_rejection_check_linear(z_1, z_2, ctx);
+}
+
 void evmlr_lin_proof_ctx_init(evmlr_lin_proof_ctx_t ctx, slong k, slong m) {
     ctx->k = k;
     ctx->m = m;
     nmod_poly_init(ctx->cyclo_poly, MOD_Q);
     nmod_poly_set_coeff_ui(ctx->cyclo_poly, DEGREE_N, 1);
     nmod_poly_set_coeff_ui(ctx->cyclo_poly, 0, 1);
+    
+    ctx->eta = ETA;
+    ctx->beta = 0;
+    ctx->sample_mask = evmlr_lin_sample_mask_binomial;
+    ctx->rejection_check = evmlr_lin_rejection_check_binomial;
+    ctx->norm_check = evmlr_lin_norm_check_binomial;
+}
+
+void evmlr_lin_proof_ctx_set_linear(evmlr_lin_proof_ctx_t ctx, slong beta) {
+    ctx->beta = beta;
+    ctx->sample_mask = evmlr_lin_sample_mask_linear;
+    ctx->rejection_check = evmlr_lin_rejection_check_linear;
+    ctx->norm_check = evmlr_lin_norm_check_linear;
 }
 
 void evmlr_lin_proof_ctx_clear(evmlr_lin_proof_ctx_t ctx) {
@@ -70,7 +109,7 @@ int evmlr_lin_prove(evmlr_lin_proof_t proof,
     evmlr_utils_lows_mat(t_0, t);
 
     while (!success) {
-        evmlr_utils_binom_sample_mat_ring(y, ETA); // Use standard sampling
+        ctx->sample_mask(y, ctx);
 
         // w = HIGHS(A y)
         nmod_poly_mat_mul(Ay, A, y);
@@ -138,6 +177,10 @@ int evmlr_lin_prove(evmlr_lin_proof_t proof,
             continue;
         }
 
+        if (!ctx->rejection_check(proof->z_1, NULL, ctx)) {
+            continue;
+        }
+
         // Compute z_2 = HINT(Az_1 - ct_1, ct_0)
         nmod_poly_mat_mul(Az, A, proof->z_1);
         for (slong i = 0; i < ctx->k; i++) {
@@ -151,7 +194,7 @@ int evmlr_lin_prove(evmlr_lin_proof_t proof,
 
         evmlr_utils_make_hint_mat(proof->z_2, Az_minus_ct1, ct_0);
         
-        success = 1; // Basic flow, no rejection loops explicitly enforcing bound right now
+        success = 1;
     }
 
     nmod_poly_mat_clear(y);
@@ -223,6 +266,9 @@ int evmlr_lin_verify(const evmlr_lin_proof_t proof,
     evmlr_utils_use_hint_mat(w_prime, proof->z_2, Az_minus_ct1);
 
     int valid = nmod_poly_mat_equal(w_prime, proof->w);
+    if (valid) {
+        valid = ctx->norm_check(proof->z_1, NULL, ctx);
+    }
 
     nmod_poly_clear(c);
     nmod_poly_clear(one);
@@ -264,6 +310,19 @@ void test(evmlr_lin_proof_ctx_t ctx, flint_rand_t state) {
     evmlr_lin_proof_init(proof, ctx);
 
     TEST_BEGIN("Compressed Hint linear proof verification passes") {
+        evmlr_lin_prove(proof, A, s_1, s_2, t, ctx);
+        int valid = evmlr_lin_verify(proof, A, t, ctx);
+        TEST_ASSERT(valid == 1, end_comp);
+    } TEST_END;
+
+    // Test with linear sampling
+    evmlr_lin_proof_ctx_set_linear(ctx, 2000);
+
+    // Resample t = A s_1 + s_2
+    nmod_poly_mat_mulmod(t, A, s_1, ctx->cyclo_poly);
+    nmod_poly_mat_add(t, t, s_2);
+
+    TEST_BEGIN("Compressed Hint linear proof verification (linear/uniform sampling) passes") {
         evmlr_lin_prove(proof, A, s_1, s_2, t, ctx);
         int valid = evmlr_lin_verify(proof, A, t, ctx);
         TEST_ASSERT(valid == 1, end_comp);

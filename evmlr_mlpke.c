@@ -87,17 +87,15 @@ void evmlr_mlpke_enc(evmlr_mlpke_cipher_t cipher, const nmod_poly_t msg, const e
 
 void evmlr_mlpke_dec(nmod_poly_t msg, const evmlr_mlpke_cipher_t cipher, const evmlr_mlpke_sk_t sk, const evmlr_mlpke_ctx_t ctx) {
     // \tilde{m} = v - u^T s
-    nmod_poly_t m_tilde, one;
+    nmod_poly_t m_tilde;
     nmod_poly_mat_t tmp;
     nmod_poly_init(m_tilde, MOD_Q);
-    nmod_poly_init(one, MOD_Q);
-    nmod_poly_one(one);
     nmod_poly_mat_init(tmp, 1, 1, MOD_Q);
     nmod_poly_set(m_tilde, cipher->v);
 
     nmod_poly_mat_mul(tmp, cipher->uT, sk->s);
     nmod_poly_struct* poly = nmod_poly_mat_entry(tmp, 0, 0);
-    nmod_poly_mulmod(poly, poly, one, ctx->cyclo_poly);
+    nmod_poly_rem(poly, poly, ctx->cyclo_poly);
 
     nmod_poly_sub(m_tilde, m_tilde, poly);
 
@@ -115,7 +113,6 @@ void evmlr_mlpke_dec(nmod_poly_t msg, const evmlr_mlpke_cipher_t cipher, const e
     }
 
     nmod_poly_clear(m_tilde);
-    nmod_poly_clear(one);
     nmod_poly_mat_clear(tmp);
 }
 
