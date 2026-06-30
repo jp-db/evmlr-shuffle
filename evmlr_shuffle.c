@@ -1,7 +1,6 @@
 #include "evmlr_shuffle.h"
+#include "evmlr_challenge.h"
 #include "evmlr_utils.h"
-#include "sha.h"
-#include "fastrandombytes.h"
 
 #ifdef MAIN
 #include "test.h"
@@ -71,66 +70,31 @@ void evmlr_shuffle_pp_clear(evmlr_shuffle_pp_t pp, const evmlr_shuffle_ctx_t ctx
     free(pp->c_star);
 }
 
-static void sha256_update_mat(SHA256Context *sha, const nmod_poly_mat_t mat) {
-    for (slong i = 0; i < nmod_poly_mat_nrows(mat); i++) {
-        for (slong j = 0; j < nmod_poly_mat_ncols(mat); j++) {
-            nmod_poly_struct *poly = nmod_poly_mat_entry(mat, i, j);
-            for (slong c = 0; c < nmod_poly_length(poly); c++) {
-                ulong coeff = nmod_poly_get_coeff_ui(poly, c);
-                SHA256Input(sha, (const uint8_t *)&coeff, sizeof(ulong));
-            }
-        }
-    }
-}
-
 static void get_challenges_1(nmod_poly_t alpha, nmod_poly_t beta, nmod_poly_t lambda,
                              const evmlr_shuffle_pp_t pp, const evmlr_commit_t P, const evmlr_shuffle_ctx_t ctx, uint8_t hash_out[SHA256HashSize]) {
-    SHA256Context sha;
-    SHA256Reset(&sha);
-    sha256_update_mat(&sha, pp->D->c);
+    evmlr_challenge_t chal;
+    evmlr_challenge_init(chal);
+    evmlr_challenge_add_matrix(chal, pp->D->c);
     for (slong i = 0; i < ctx->N; i++) {
-        sha256_update_mat(&sha, pp->c_hat[i]);
-        sha256_update_mat(&sha, pp->c_star[i]->c);
+        evmlr_challenge_add_matrix(chal, pp->c_hat[i]);
+        evmlr_challenge_add_matrix(chal, pp->c_star[i]->c);
     }
-    sha256_update_mat(&sha, P->c);
-    
-    SHA256Result(&sha, hash_out);
-    fastrandombytes_setseed(hash_out);
-    
-    ulong buf;
-    if (alpha) nmod_poly_zero(alpha);
-    for (int i = 0; i < (DEGREE_N >> 1); i++) {
-        fastrandombytes((unsigned char *)&buf, sizeof(buf));
-        if (alpha) nmod_poly_set_coeff_ui(alpha, i, buf % MOD_Q);
-    }
-    if (beta) nmod_poly_zero(beta);
-    for (int i = 0; i < (DEGREE_N >> 1); i++) {
-        fastrandombytes((unsigned char *)&buf, sizeof(buf));
-        if (beta) nmod_poly_set_coeff_ui(beta, i, buf % MOD_Q);
-    }
-    if (lambda) nmod_poly_zero(lambda);
-    for (int i = 0; i < (DEGREE_N >> 1); i++) {
-        fastrandombytes((unsigned char *)&buf, sizeof(buf));
-        if (lambda) nmod_poly_set_coeff_ui(lambda, i, buf % MOD_Q);
-    }
+    evmlr_challenge_add_matrix(chal, P->c);
+
+    evmlr_challenge_get_poly_half(alpha, chal);
+    evmlr_challenge_get_poly_half(beta, chal);
+    evmlr_challenge_get_poly_half(lambda, chal);
+
+    evmlr_challenge_get_hash(hash_out, chal);
 }
 
 static void get_challenge_2(nmod_poly_t gamma, const uint8_t hash_in[SHA256HashSize], const evmlr_commit_t W) {
-    SHA256Context sha;
-    SHA256Reset(&sha);
-    SHA256Input(&sha, hash_in, SHA256HashSize);
-    sha256_update_mat(&sha, W->c);
-    
-    uint8_t hash_out[SHA256HashSize];
-    SHA256Result(&sha, hash_out);
-    fastrandombytes_setseed(hash_out);
-    
-    ulong buf;
-    if (gamma) nmod_poly_zero(gamma);
-    for (int i = 0; i < (DEGREE_N >> 1); i++) {
-        fastrandombytes((unsigned char *)&buf, sizeof(buf));
-        if (gamma) nmod_poly_set_coeff_ui(gamma, i, buf % MOD_Q);
-    }
+    evmlr_challenge_t chal;
+    evmlr_challenge_init(chal);
+    evmlr_challenge_add_bytes(chal, hash_in, SHA256HashSize);
+    evmlr_challenge_add_matrix(chal, W->c);
+
+    evmlr_challenge_get_poly_half(gamma, chal);
 }
 
 static void prove_commit(evmlr_bin_proof_t proof, const evmlr_commit_ctx_t com_ctx, const nmod_poly_mat_t m, const nmod_poly_mat_t r, const nmod_poly_mat_t c, flint_rand_t state) {

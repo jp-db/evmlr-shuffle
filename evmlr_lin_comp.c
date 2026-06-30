@@ -1,7 +1,6 @@
 #include "evmlr_lin_proof.h"
 #include "evmlr_utils.h"
-#include "sha.h"
-#include "fastrandombytes.h"
+#include "evmlr_challenge.h"
 
 static void evmlr_lin_sample_mask_binomial(nmod_poly_mat_t y, const struct evmlr_lin_proof_ctx_struct* ctx) {
     evmlr_utils_binom_sample_mat_ring(y, ctx->eta);
@@ -66,17 +65,7 @@ void evmlr_lin_proof_clear(evmlr_lin_proof_t proof) {
     nmod_poly_mat_clear(proof->z_2);
 }
 
-static void sha256_update_mat(SHA256Context *sha, const nmod_poly_mat_t mat) {
-    for (slong i = 0; i < mat->r; i++) {
-        for (slong j = 0; j < mat->c; j++) {
-            nmod_poly_struct *poly = nmod_poly_mat_entry(mat, i, j);
-            for (slong c = 0; c < nmod_poly_length(poly); c++) {
-                ulong coeff = nmod_poly_get_coeff_ui(poly, c);
-                SHA256Input(sha, (const uint8_t *)&coeff, sizeof(ulong));
-            }
-        }
-    }
-}
+
 
 int evmlr_lin_prove(evmlr_lin_proof_t proof, 
                          const nmod_poly_mat_t A, 
@@ -118,31 +107,12 @@ int evmlr_lin_prove(evmlr_lin_proof_t proof,
         }
         evmlr_utils_highs_mat(proof->w, Ay);
 
-        // Sample challenge c deterministically via Hash(A, t_1, w)
-        SHA256Context sha;
-        SHA256Reset(&sha);
-        sha256_update_mat(&sha, A);
-        sha256_update_mat(&sha, t_1);
-        sha256_update_mat(&sha, proof->w);
-
-        uint8_t hash[SHA256HashSize];
-        SHA256Result(&sha, hash);
-
-        fastrandombytes_setseed(hash);
-        nmod_poly_zero(c);
-        
-        int count = 0;
-        while (count < 1) {
-            ulong idx;
-            fastrandombytes((unsigned char *)&idx, sizeof(ulong));
-            idx %= DEGREE_N;
-            if (nmod_poly_get_coeff_ui(c, idx) == 0) {
-                ulong sign;
-                fastrandombytes((unsigned char *)&sign, 1);
-                nmod_poly_set_coeff_ui(c, idx, (sign & 1) ? 1 : MOD_Q - 1);
-                count++;
-            }
-        }
+        evmlr_challenge_t chal;
+        evmlr_challenge_init(chal);
+        evmlr_challenge_add_matrix(chal, A);
+        evmlr_challenge_add_matrix(chal, t_1);
+        evmlr_challenge_add_matrix(chal, proof->w);
+        evmlr_challenge_get_poly_one_ternary(c, chal);
 
         // Compute z_1 = y + c s_1
         for (slong i = 0; i < ctx->m; i++) {
@@ -220,34 +190,17 @@ int evmlr_lin_verify(const evmlr_lin_proof_t proof,
     nmod_poly_mat_init(t_1, ctx->k, 1, MOD_Q);
     evmlr_utils_highs_mat(t_1, t);
 
-    SHA256Context sha;
-    SHA256Reset(&sha);
-    sha256_update_mat(&sha, A);
-    sha256_update_mat(&sha, t_1);
-    sha256_update_mat(&sha, proof->w);
-
-    uint8_t hash[SHA256HashSize];
-    SHA256Result(&sha, hash);
-
-    fastrandombytes_setseed(hash);
-    
     nmod_poly_t c, one;
     nmod_poly_init(c, MOD_Q);
     nmod_poly_init(one, MOD_Q);
     nmod_poly_one(one);
-    
-    int count = 0;
-    while (count < 1) {
-        ulong idx;
-        fastrandombytes((unsigned char *)&idx, sizeof(ulong));
-        idx %= DEGREE_N;
-        if (nmod_poly_get_coeff_ui(c, idx) == 0) {
-            ulong sign;
-            fastrandombytes((unsigned char *)&sign, 1);
-            nmod_poly_set_coeff_ui(c, idx, (sign & 1) ? 1 : MOD_Q - 1);
-            count++;
-        }
-    }
+
+    evmlr_challenge_t chal;
+    evmlr_challenge_init(chal);
+    evmlr_challenge_add_matrix(chal, A);
+    evmlr_challenge_add_matrix(chal, t_1);
+    evmlr_challenge_add_matrix(chal, proof->w);
+    evmlr_challenge_get_poly_one_ternary(c, chal);
 
     nmod_poly_mat_t Az, ct_1, Az_minus_ct1, w_prime;
     nmod_poly_mat_init(Az, ctx->k, 1, MOD_Q);
