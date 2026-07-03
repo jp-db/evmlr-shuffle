@@ -1,6 +1,9 @@
 #include "evmlr_lin_proof.h"
 #include "evmlr_utils.h"
 #include "evmlr_challenge.h"
+#include <stdio.h>
+#include <stdlib.h>
+#include <time.h>
 
 static void evmlr_lin_sample_mask_binomial(nmod_poly_mat_t y, const struct evmlr_lin_proof_ctx_struct* ctx) {
     evmlr_utils_binom_sample_mat_ring(y, ctx->eta);
