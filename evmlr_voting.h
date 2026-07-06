@@ -2,6 +2,7 @@
 #define EVMLR_VOTING_H
 
 #include "evmlr_shuffle.h"
+#include "evmlr_enc_proof.h"
 #include "sha.h"
 
 // Public parameters for the voting protocol
@@ -36,7 +37,7 @@ typedef evmlr_voting_ciphertext_struct evmlr_voting_ciphertext_t[1];
 
 // ZK Proof of correct encryption for a layer
 typedef struct {
-    uint8_t hash[SHA256HashSize]; // SHA-256 hash of (ciphertext || plaintext)
+    evmlr_enc_proof_struct proof;
 } evmlr_voting_proof_enc_struct;
 typedef evmlr_voting_proof_enc_struct evmlr_voting_proof_enc_t[1];
 

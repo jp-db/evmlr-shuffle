@@ -41,6 +41,8 @@ void evmlr_mlpke_keypair_clear(evmlr_mlpke_keypair_t keypair);
 
 void evmlr_mlpke_enc(evmlr_mlpke_cipher_t cipher, const nmod_poly_t msg, const evmlr_mlpke_pk_t pk, const evmlr_mlpke_ctx_t ctx);
 
+void evmlr_mlpke_enc_with_secrets(evmlr_mlpke_cipher_t cipher, nmod_poly_mat_t r, nmod_poly_mat_t e2, nmod_poly_t e3, const nmod_poly_t msg, const evmlr_mlpke_pk_t pk, const evmlr_mlpke_ctx_t ctx);
+
 void evmlr_mlpke_dec(nmod_poly_t msg, const evmlr_mlpke_cipher_t cipher, const evmlr_mlpke_sk_t sk, const evmlr_mlpke_ctx_t ctx);
 
 void evmlr_mlpke_cipher_clear(evmlr_mlpke_cipher_t cipher);

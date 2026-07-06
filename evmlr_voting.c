@@ -38,7 +38,7 @@ static void deserialize_layer(evmlr_voting_layer_t ct, const nmod_poly_mat_t msg
     }
 }
 
-static void voting_encrypt_layer(evmlr_voting_layer_t ct, const nmod_poly_mat_t msg, const evmlr_mlpke_pk_t pk, const evmlr_voting_pp_t pp, flint_rand_t state) {
+static void voting_encrypt_and_prove_layer(evmlr_voting_layer_t ct, evmlr_enc_proof_t proof, const nmod_poly_mat_t msg, const evmlr_mlpke_pk_t pk, const evmlr_voting_pp_t pp, flint_rand_t state) {
     slong L_in = msg->r;
 
     // Pad msg to L_max
@@ -49,11 +49,35 @@ static void voting_encrypt_layer(evmlr_voting_layer_t ct, const nmod_poly_mat_t 
         nmod_poly_set(nmod_poly_mat_entry(msg_padded, i, 0), nmod_poly_mat_entry(msg, i, 0));
     }
 
-    // Encrypt using HPKE context
-    evmlr_hpke_cipher_t cipher;
-    evmlr_hpke_encrypt(cipher, NULL, msg_padded, pk, pp->hpke_ctx, state);
+    // Manually perform HPKE encryption to capture the secrets
+    // Sample key/seed
+    evmlr_otse_key_t key;
+    evmlr_otse_keygen(key, state);
 
-    // Copy to ct
+    // Allocate ML-PKE secrets
+    nmod_poly_mat_t r_mats[K_LWR];
+    nmod_poly_mat_t e2_mats[K_LWR];
+    nmod_poly_t e3_polys[K_LWR];
+
+    evmlr_hpke_cipher_t cipher;
+    for (int i = 0; i < K_LWR; i++) {
+        nmod_poly_mat_init(r_mats[i], 1, K_LWE, MOD_Q);
+        nmod_poly_mat_init(e2_mats[i], 1, K_LWE, MOD_Q);
+        evmlr_utils_binom_sample_mat_ring(r_mats[i], ETA);
+        evmlr_utils_binom_sample_mat_ring(e2_mats[i], ETA);
+
+        nmod_poly_init(e3_polys[i], MOD_Q);
+        evmlr_utils_binom_sample_ring(e3_polys[i], ETA);
+
+        evmlr_mlpke_enc_with_secrets(cipher->enc_cipher[i], r_mats[i], e2_mats[i], e3_polys[i],
+                                     nmod_poly_mat_entry(key->s, i, 0), pk, pp->hpke_ctx->enc_ctx);
+    }
+
+    nmod_poly_mat_t d_dagger;
+    nmod_poly_mat_init(d_dagger, 2 * ETA * (K_LWE + pp->L_max), 1, MOD_Q);
+    evmlr_otse_encrypt(cipher->otse_cipher, d_dagger, msg_padded, key, pp->hpke_ctx->otse_ctx);
+
+    // Copy cipher to ct
     evmlr_voting_layer_clear(ct);
     evmlr_voting_layer_init(ct, L_in);
     for (int i = 0; i < K_LWR; i++) {
@@ -64,11 +88,21 @@ static void voting_encrypt_layer(evmlr_voting_layer_t ct, const nmod_poly_mat_t 
         nmod_poly_set(nmod_poly_mat_entry(ct->otse_cipher->c, i, 0), nmod_poly_mat_entry(cipher->otse_cipher->c, i, 0));
     }
 
+    // Generate ZK proofs
+    evmlr_enc_proof_prove(proof, pk, pp->hpke_ctx->otse_ctx, r_mats, e2_mats, e3_polys, key, cipher, d_dagger, msg, L_in, pp->L_max);
+
+    // Clear secrets
+    for (int i = 0; i < K_LWR; i++) {
+        nmod_poly_mat_clear(r_mats[i]);
+        nmod_poly_mat_clear(e2_mats[i]);
+        nmod_poly_clear(e3_polys[i]);
+    }
+    evmlr_otse_keyclear(key);
+    nmod_poly_mat_clear(d_dagger);
     nmod_poly_mat_clear(msg_padded);
     evmlr_hpke_cipher_clear(cipher);
 }
 
-// Helper to decrypt a layer
 extern void calc_a(nmod_poly_mat_t a, nmod_poly_mat_t d_dagger, const evmlr_otse_key_t key, const evmlr_otse_ctx_t ctx);
 
 static void voting_decrypt_layer(nmod_poly_mat_t msg, nmod_poly_mat_t d_dagger, nmod_poly_mat_t a, const evmlr_voting_layer_t ct, const evmlr_mlpke_sk_t sk, const evmlr_voting_pp_t pp) {
@@ -77,6 +111,7 @@ static void voting_decrypt_layer(nmod_poly_mat_t msg, nmod_poly_mat_t d_dagger, 
     // Reconstruct key s
     evmlr_otse_key_t key;
     nmod_poly_t key_poly;
+    nmod_poly_init(key_poly, MOD_Q);
     nmod_poly_mat_init(key->s, K_LWR, 1, MOD_Q);
 
     for (int i = 0; i < K_LWR; i++) {
@@ -97,52 +132,6 @@ static void voting_decrypt_layer(nmod_poly_mat_t msg, nmod_poly_mat_t d_dagger, 
     }
 
     evmlr_otse_keyclear(key);
-}
-
-// Compute deterministic proof hash
-static void hash_layer_and_plaintext(uint8_t hash[SHA256HashSize], const evmlr_voting_layer_t ct, const nmod_poly_mat_t plaintext) {
-    SHA256Context sha;
-    SHA256Reset(&sha);
-
-    // Hash ML-PKE ciphertexts
-    for (int i = 0; i < K_LWR; i++) {
-        // Hash uT
-        for (int j = 0; j < K_LWE; j++) {
-            nmod_poly_struct* poly = nmod_poly_mat_entry(ct->enc_cipher[i]->uT, 0, j);
-            for (slong c = 0; c <= nmod_poly_degree(poly); c++) {
-                ulong coeff = nmod_poly_get_coeff_ui(poly, c);
-                SHA256Input(&sha, (uint8_t*)&coeff, sizeof(ulong));
-            }
-        }
-        // Hash v
-        const nmod_poly_struct* poly = ct->enc_cipher[i]->v;
-        for (slong c = 0; c <= nmod_poly_degree(poly); c++) {
-            ulong coeff = nmod_poly_get_coeff_ui(poly, c);
-            SHA256Input(&sha, (uint8_t*)&coeff, sizeof(ulong));
-        }
-    }
-
-    // Hash OTSE ciphertext c
-    slong L_ct = ct->otse_cipher->c->r;
-    for (slong i = 0; i < L_ct; i++) {
-        nmod_poly_struct* poly = nmod_poly_mat_entry(ct->otse_cipher->c, i, 0);
-        for (slong c = 0; c <= nmod_poly_degree(poly); c++) {
-            ulong coeff = nmod_poly_get_coeff_ui(poly, c);
-            SHA256Input(&sha, (uint8_t*)&coeff, sizeof(ulong));
-        }
-    }
-
-    // Hash plaintext
-    slong L_pt = plaintext->r;
-    for (slong i = 0; i < L_pt; i++) {
-        nmod_poly_struct* poly = nmod_poly_mat_entry(plaintext, i, 0);
-        for (slong c = 0; c <= nmod_poly_degree(poly); c++) {
-            ulong coeff = nmod_poly_get_coeff_ui(poly, c);
-            SHA256Input(&sha, (uint8_t*)&coeff, sizeof(ulong));
-        }
-    }
-
-    SHA256Result(&sha, hash);
 }
 
 static void sync_hpke_ctx(evmlr_hpke_ctx_t dst, const evmlr_hpke_ctx_t src) {
@@ -200,11 +189,8 @@ void evmlr_voting_casting(evmlr_voting_submission_t submission, slong voter_id, 
             slong L_otse = (k - j - 1) * K_LWR * (K_LWE + 1) + 1;
             evmlr_voting_layer_init(temp_layer, L_otse);
 
-            // Encrypt current_msg under pks[j]
-            voting_encrypt_layer(temp_layer, current_msg, pp->pks[j], pp, state);
-
-            // Generate proof of correct encryption
-            hash_layer_and_plaintext(submission->proofs[j]->hash, temp_layer, current_msg);
+            // Encrypt current_msg under pks[j] and generate proof
+            voting_encrypt_and_prove_layer(temp_layer, &submission->proofs[j]->proof, current_msg, pp->pks[j], pp, state);
 
             // Next plaintext is the serialized ciphertext
             nmod_poly_mat_clear(current_msg);
@@ -214,11 +200,8 @@ void evmlr_voting_casting(evmlr_voting_submission_t submission, slong voter_id, 
 
             evmlr_voting_layer_clear(temp_layer);
         } else {
-            // Encrypt current_msg under pks[0] to the outermost layer
-            voting_encrypt_layer(submission->ballot->layer, current_msg, pp->pks[0], pp, state);
-
-            // Generate proof of correct encryption
-            hash_layer_and_plaintext(submission->proofs[0]->hash, submission->ballot->layer, current_msg);
+            // Encrypt current_msg under pks[0] to the outermost layer and generate proof
+            voting_encrypt_and_prove_layer(submission->ballot->layer, &submission->proofs[0]->proof, current_msg, pp->pks[0], pp, state);
         }
     }
 
@@ -227,9 +210,26 @@ void evmlr_voting_casting(evmlr_voting_submission_t submission, slong voter_id, 
 
 // verify_proof_of_encryption(pp, proof, ciphertext_layer, decrypted_plaintext, layer_idx)
 int evmlr_voting_verify_enc(const evmlr_voting_pp_t pp, const evmlr_voting_proof_enc_t proof, const evmlr_voting_layer_t ct, const nmod_poly_mat_t decrypted_plaintext, slong layer_idx) {
-    uint8_t computed_hash[SHA256HashSize];
-    hash_layer_and_plaintext(computed_hash, ct, decrypted_plaintext);
-    return memcmp(computed_hash, proof->hash, SHA256HashSize) == 0;
+    // Reconstruct the hpke cipher representation
+    evmlr_hpke_cipher_t cipher;
+    for (int i = 0; i < K_LWR; i++) {
+        nmod_poly_mat_init(cipher->enc_cipher[i]->uT, 1, K_LWE, MOD_Q);
+        nmod_poly_mat_set(cipher->enc_cipher[i]->uT, ct->enc_cipher[i]->uT);
+        nmod_poly_init(cipher->enc_cipher[i]->v, MOD_Q);
+        nmod_poly_set(cipher->enc_cipher[i]->v, ct->enc_cipher[i]->v);
+    }
+    // OTSE ciphertext representation in voting is of size L_in, but verify expects L_max
+    nmod_poly_mat_init(cipher->otse_cipher->c, pp->L_max, 1, MOD_Q);
+    nmod_poly_mat_zero(cipher->otse_cipher->c);
+    for (slong i = 0; i < ct->otse_cipher->c->r; i++) {
+        nmod_poly_set(nmod_poly_mat_entry(cipher->otse_cipher->c, i, 0),
+                      nmod_poly_mat_entry(ct->otse_cipher->c, i, 0));
+    }
+
+    int ok = evmlr_enc_proof_verify(&proof->proof, pp->pks[layer_idx], pp->hpke_ctx->otse_ctx, cipher, decrypted_plaintext, pp->L_max);
+
+    evmlr_hpke_cipher_clear(cipher);
+    return ok;
 }
 
 // counting(...)
@@ -273,14 +273,15 @@ slong evmlr_voting_counting(nmod_poly_mat_t* results, evmlr_shuffle_proof_t* shu
 
     // 2. Initialize current ciphertexts and proofs
     evmlr_voting_layer_struct* curr_cts = (evmlr_voting_layer_struct*) malloc(N * sizeof(evmlr_voting_layer_struct));
-    evmlr_voting_proof_enc_struct* curr_proofs = (evmlr_voting_proof_enc_struct*) malloc(N * sizeof(evmlr_voting_proof_enc_struct));
 
     // Array of remaining proofs for each voter
     evmlr_voting_proof_enc_t** remaining_proofs = (evmlr_voting_proof_enc_t**) malloc(N * sizeof(evmlr_voting_proof_enc_t*));
     for (slong i = 0; i < N; i++) {
         remaining_proofs[i] = (evmlr_voting_proof_enc_t*) malloc(k * sizeof(evmlr_voting_proof_enc_t));
         for (slong l = 0; l < k; l++) {
-            memcpy(remaining_proofs[i][l]->hash, active_subs[i]->proofs[l]->hash, SHA256HashSize);
+            slong L_curr_l = (k - l - 1) * K_LWR * (K_LWE + 1) + 1;
+            evmlr_enc_proof_init(&remaining_proofs[i][l]->proof, L_curr_l);
+            evmlr_enc_proof_copy(&remaining_proofs[i][l]->proof, &active_subs[i]->proofs[l]->proof);
         }
     }
 
@@ -292,8 +293,6 @@ slong evmlr_voting_counting(nmod_poly_mat_t* results, evmlr_shuffle_proof_t* shu
             nmod_poly_set(curr_cts[i].enc_cipher[r]->v, active_subs[i]->ballot->layer->enc_cipher[r]->v);
         }
         nmod_poly_mat_set(curr_cts[i].otse_cipher->c, active_subs[i]->ballot->layer->otse_cipher->c);
-
-        memcpy(curr_proofs[i].hash, active_subs[i]->proofs[0]->hash, SHA256HashSize);
     }
 
     nmod_poly_mat_t* decrypted_msgs = (nmod_poly_mat_t*) malloc(N * sizeof(nmod_poly_mat_t));
@@ -302,6 +301,14 @@ slong evmlr_voting_counting(nmod_poly_mat_t* results, evmlr_shuffle_proof_t* shu
     // Process layer by layer
     for (slong j = 0; j < k; j++) {
         slong L_next = (k - j - 1) * K_LWR * (K_LWE + 1) + 1;
+        slong L_curr_j = (k - j) * K_LWR * (K_LWE + 1) + 1;
+
+        // Dynamically allocate and initialize curr_proofs for the current layer j
+        evmlr_voting_proof_enc_t* curr_proofs = (evmlr_voting_proof_enc_t*) malloc(N * sizeof(evmlr_voting_proof_enc_t));
+        for (slong i = 0; i < N; i++) {
+            evmlr_enc_proof_init(&curr_proofs[i]->proof, L_curr_j - K_LWR * (K_LWE + 1));
+            evmlr_enc_proof_copy(&curr_proofs[i]->proof, &remaining_proofs[i][j]->proof);
+        }
 
         nmod_poly_mat_t* d_dagger = (nmod_poly_mat_t*) malloc(N * sizeof(nmod_poly_mat_t));
         nmod_poly_mat_t* a_mats = (nmod_poly_mat_t*) malloc(N * sizeof(nmod_poly_mat_t));
@@ -309,7 +316,7 @@ slong evmlr_voting_counting(nmod_poly_mat_t* results, evmlr_shuffle_proof_t* shu
         // Decrypt and Verify
         for (slong i = 0; i < N; i++) {
             voting_decrypt_layer(decrypted_msgs[i], d_dagger[i], a_mats[i], &curr_cts[i], sk->sks[j], pp);
-            int ok = evmlr_voting_verify_enc(pp, &curr_proofs[i], &curr_cts[i], decrypted_msgs[i], j);
+            int ok = evmlr_voting_verify_enc(pp, curr_proofs[i], &curr_cts[i], decrypted_msgs[i], j);
             if (!ok) {
                 printf("Warning: proof of encryption failed for voter %ld at server %ld\n", active_subs[i]->voter_id, j);
             }
@@ -329,10 +336,15 @@ slong evmlr_voting_counting(nmod_poly_mat_t* results, evmlr_shuffle_proof_t* shu
         for (slong i = 0; i < N; i++) {
             temp_remaining_proofs[i] = (evmlr_voting_proof_enc_t*) malloc(k * sizeof(evmlr_voting_proof_enc_t));
             for (slong l = 0; l < k; l++) {
-                memcpy(temp_remaining_proofs[i][l]->hash, remaining_proofs[pi[i]][l]->hash, SHA256HashSize);
+                slong L_curr_l = (k - l - 1) * K_LWR * (K_LWE + 1) + 1;
+                evmlr_enc_proof_init(&temp_remaining_proofs[i][l]->proof, L_curr_l);
+                evmlr_enc_proof_copy(&temp_remaining_proofs[i][l]->proof, &remaining_proofs[pi[i]][l]->proof);
             }
         }
         for (slong i = 0; i < N; i++) {
+            for (slong l = 0; l < k; l++) {
+                evmlr_enc_proof_clear(&remaining_proofs[i][l]->proof);
+            }
             free(remaining_proofs[i]);
             remaining_proofs[i] = temp_remaining_proofs[i];
         }
@@ -421,9 +433,13 @@ slong evmlr_voting_counting(nmod_poly_mat_t* results, evmlr_shuffle_proof_t* shu
             for (slong i = 0; i < N; i++) {
                 evmlr_voting_layer_clear(&curr_cts[i]);
                 deserialize_layer(&curr_cts[i], shuffled_msgs[i], L_next_ct - K_LWR * (K_LWE + 1));
-                memcpy(curr_proofs[i].hash, remaining_proofs[i][j + 1]->hash, SHA256HashSize);
             }
         }
+
+        for (slong i = 0; i < N; i++) {
+            evmlr_enc_proof_clear(&curr_proofs[i]->proof);
+        }
+        free(curr_proofs);
 
         for (slong i = 0; i < N; i++) {
             nmod_poly_mat_clear(decrypted_msgs[i]);
@@ -435,10 +451,12 @@ slong evmlr_voting_counting(nmod_poly_mat_t* results, evmlr_shuffle_proof_t* shu
     free(shuffled_msgs);
     for (slong i = 0; i < N; i++) {
         evmlr_voting_layer_clear(&curr_cts[i]);
+        for (slong l = 0; l < k; l++) {
+            evmlr_enc_proof_clear(&remaining_proofs[i][l]->proof);
+        }
         free(remaining_proofs[i]);
     }
     free(curr_cts);
-    free(curr_proofs);
     free(remaining_proofs);
     free(active_subs);
 
@@ -465,10 +483,18 @@ void evmlr_voting_submission_init(evmlr_voting_submission_t sub, const evmlr_vot
     slong k = pp->k;
     evmlr_voting_layer_init(sub->ballot->layer, pp->L_max);
     sub->proofs = (evmlr_voting_proof_enc_t*) malloc(k * sizeof(evmlr_voting_proof_enc_t));
+    for (slong j = 0; j < k; j++) {
+        slong L_curr = (k - j - 1) * K_LWR * (K_LWE + 1) + 1;
+        evmlr_enc_proof_init(&sub->proofs[j]->proof, L_curr);
+    }
 }
 
 void evmlr_voting_submission_clear(evmlr_voting_submission_t sub, const evmlr_voting_pp_t pp) {
+    slong k = pp->k;
     evmlr_voting_layer_clear(sub->ballot->layer);
+    for (slong j = 0; j < k; j++) {
+        evmlr_enc_proof_clear(&sub->proofs[j]->proof);
+    }
     free(sub->proofs);
 }
 
