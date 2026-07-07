@@ -15,6 +15,8 @@
 #define M_LEN 1
 #define LOG_Q_CEIL 12
 
+#define NONZERO 36
+
 #define SHUFFLE_N_MSGS 10 // Number of messages to shuffle, for testing and benchmarking
 
 #define EVMLR_SHUFFLE_EVMLR_PARAMS_H

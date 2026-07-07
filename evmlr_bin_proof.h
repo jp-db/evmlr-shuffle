@@ -7,12 +7,24 @@
 #include "evmlr_params.h"
 #include "evmlr_commit.h"
 
+#include "gaussian.h"
+
 // Context for the binary proof
 typedef struct {
     slong k;   // K_SIS
     slong m;   // 2 * K_SIS
     slong L;   // message length (number of polynomials)
     nmod_poly_t cyclo_poly;
+    slong beta; // Bound for rejection sampling
+    
+    // Gaussian fields
+    int use_gaussian;
+    double sigma_m;
+    double sigma_r;
+    uint64_t s2_m;
+    uint64_t s2_r;
+    discrete_gaussian_ctx_t dg_ctx_m;
+    discrete_gaussian_ctx_t dg_ctx_r;
 } evmlr_bin_proof_ctx_struct;
 typedef evmlr_bin_proof_ctx_struct evmlr_bin_proof_ctx_t[1];
 
@@ -64,5 +76,8 @@ int evmlr_bin_verify(const evmlr_bin_proof_t proof,
                      const nmod_poly_mat_t A_2,
                      const nmod_poly_mat_t c,
                      const evmlr_bin_proof_ctx_t ctx);
+
+void evmlr_bin_proof_ctx_set_linear(evmlr_bin_proof_ctx_t ctx, slong beta);
+void evmlr_bin_proof_ctx_set_gaussian(evmlr_bin_proof_ctx_t ctx);
 
 #endif // EVMLR_SHUFFLE_EVMLR_BIN_PROOF_H

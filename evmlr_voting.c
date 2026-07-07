@@ -5,6 +5,7 @@
 #ifdef MAIN
 #include "test.h"
 #include "bench.h"
+#include "cpucycles.h"
 #include <sys/random.h>
 #endif
 
@@ -604,6 +605,286 @@ end:
     evmlr_voting_sk_clear(sk);
 }
 
+void bench_voting_protocol(flint_rand_t state) {
+    slong k_servers = 2;
+    slong N = 100; // 10
+
+    printf("\n=== Voting Protocol Benchmark (N = %ld voters, k = %ld servers) ===\n", N, k_servers);
+
+    // 1. Setup Phase
+    uint64_t start_setup = cpucycles();
+    evmlr_voting_pp_t pp;
+    evmlr_voting_sk_t sk;
+    evmlr_voting_setup(pp, sk, k_servers, state);
+    uint64_t end_setup = cpucycles();
+    printf("Setup Phase: %lu cycles\n", (unsigned long)(end_setup - start_setup));
+
+    // Initialize N submissions
+    evmlr_voting_submission_t subs[N];
+    for (slong i = 0; i < N; i++) {
+        evmlr_voting_submission_init(subs[i], pp);
+    }
+
+    nmod_poly_mat_t votes[N];
+    for (slong i = 0; i < N; i++) {
+        nmod_poly_mat_init(votes[i], 1, 1, MOD_Q);
+        nmod_poly_set_coeff_ui(nmod_poly_mat_entry(votes[i], 0, 0), 0, i + 1);
+    }
+
+    // 2. Casting Phase (Single Voter vs Total)
+    uint64_t start_casting = cpucycles();
+    for (slong i = 0; i < N; i++) {
+        evmlr_voting_casting(subs[i], i + 1, votes[i], pp, state);
+    }
+    uint64_t end_casting = cpucycles();
+    printf("Casting Phase (total for %ld voters): %lu cycles (avg %lu per voter)\n",
+           N, (unsigned long)(end_casting - start_casting), (unsigned long)((end_casting - start_casting) / N));
+
+    // 3. Counting/Decryption/Shuffling/Verification Phases
+    // We will measure each sub-phase inside a custom counting loop to isolate the cycles
+    nmod_poly_mat_t results[N];
+    evmlr_shuffle_proof_t shuffle_proofs[k_servers];
+
+    // Re-initialize shuffle context for N unique submissions
+    evmlr_shuffle_ctx_clear((evmlr_shuffle_ctx_struct *)pp->shuf_ctx);
+    evmlr_shuffle_ctx_init((evmlr_shuffle_ctx_struct *)pp->shuf_ctx, N, pp->L_max, state);
+    sync_hpke_ctx(((evmlr_shuffle_ctx_struct *)pp->shuf_ctx)->hpke_ctx, pp->hpke_ctx);
+
+    // Initialize current ciphertexts and proofs
+    evmlr_voting_layer_struct* curr_cts = (evmlr_voting_layer_struct*) malloc(N * sizeof(evmlr_voting_layer_struct));
+
+    // Array of remaining proofs for each voter
+    evmlr_voting_proof_enc_t** remaining_proofs = (evmlr_voting_proof_enc_t**) malloc(N * sizeof(evmlr_voting_proof_enc_t*));
+    for (slong i = 0; i < N; i++) {
+        remaining_proofs[i] = (evmlr_voting_proof_enc_t*) malloc(k_servers * sizeof(evmlr_voting_proof_enc_t));
+        for (slong l = 0; l < k_servers; l++) {
+            slong L_curr_l = (k_servers - l - 1) * K_LWR * (K_LWE + 1) + 1;
+            evmlr_enc_proof_init(&remaining_proofs[i][l]->proof, L_curr_l);
+            evmlr_enc_proof_copy(&remaining_proofs[i][l]->proof, &subs[i]->proofs[l]->proof);
+        }
+    }
+
+    slong L_curr = pp->L_max;
+    for (slong i = 0; i < N; i++) {
+        evmlr_voting_layer_init(&curr_cts[i], L_curr);
+        for (int r = 0; r < K_LWR; r++) {
+            nmod_poly_mat_set(curr_cts[i].enc_cipher[r]->uT, subs[i]->ballot->layer->enc_cipher[r]->uT);
+            nmod_poly_set(curr_cts[i].enc_cipher[r]->v, subs[i]->ballot->layer->enc_cipher[r]->v);
+        }
+        nmod_poly_mat_set(curr_cts[i].otse_cipher->c, subs[i]->ballot->layer->otse_cipher->c);
+    }
+
+    nmod_poly_mat_t* decrypted_msgs = (nmod_poly_mat_t*) malloc(N * sizeof(nmod_poly_mat_t));
+    nmod_poly_mat_t* shuffled_msgs = (nmod_poly_mat_t*) malloc(N * sizeof(nmod_poly_mat_t));
+
+    uint64_t total_dec_verify_enc = 0;
+    uint64_t total_shuffle_prove = 0;
+    uint64_t total_shuffle_verify = 0;
+
+    for (slong j = 0; j < k_servers; j++) {
+        slong L_next = (k_servers - j - 1) * K_LWR * (K_LWE + 1) + 1;
+        slong L_curr_j = (k_servers - j) * K_LWR * (K_LWE + 1) + 1;
+
+        // Dynamically allocate and initialize curr_proofs for the current layer j
+        evmlr_voting_proof_enc_t* curr_proofs = (evmlr_voting_proof_enc_t*) malloc(N * sizeof(evmlr_voting_proof_enc_t));
+        for (slong i = 0; i < N; i++) {
+            evmlr_enc_proof_init(&curr_proofs[i]->proof, L_curr_j - K_LWR * (K_LWE + 1));
+            evmlr_enc_proof_copy(&curr_proofs[i]->proof, &remaining_proofs[i][j]->proof);
+        }
+
+        nmod_poly_mat_t* d_dagger = (nmod_poly_mat_t*) malloc(N * sizeof(nmod_poly_mat_t));
+        nmod_poly_mat_t* a_mats = (nmod_poly_mat_t*) malloc(N * sizeof(nmod_poly_mat_t));
+
+        // Decrypt and Verify Encryption Proofs
+        uint64_t start_dec_verify = cpucycles();
+        for (slong i = 0; i < N; i++) {
+            voting_decrypt_layer(decrypted_msgs[i], d_dagger[i], a_mats[i], &curr_cts[i], sk->sks[j], pp);
+            int ok = evmlr_voting_verify_enc(pp, curr_proofs[i], &curr_cts[i], decrypted_msgs[i], j);
+            if (!ok) {
+                printf("Warning: proof of encryption failed for voter %ld at server %ld\n", i + 1, j);
+            }
+        }
+        uint64_t end_dec_verify = cpucycles();
+        total_dec_verify_enc += (end_dec_verify - start_dec_verify);
+
+        // Shuffle
+        size_t* pi = (size_t *) malloc(N * sizeof(size_t));
+        evmlr_utils_new_perm(pi, N);
+
+        for (slong i = 0; i < N; i++) {
+            nmod_poly_mat_init(shuffled_msgs[i], L_next, 1, MOD_Q);
+            nmod_poly_mat_set(shuffled_msgs[i], decrypted_msgs[pi[i]]);
+        }
+
+        // Shuffle remaining proofs
+        evmlr_voting_proof_enc_t** temp_remaining_proofs = (evmlr_voting_proof_enc_t**) malloc(N * sizeof(evmlr_voting_proof_enc_t*));
+        for (slong i = 0; i < N; i++) {
+            temp_remaining_proofs[i] = (evmlr_voting_proof_enc_t*) malloc(k_servers * sizeof(evmlr_voting_proof_enc_t));
+            for (slong l = 0; l < k_servers; l++) {
+                slong L_curr_l = (k_servers - l - 1) * K_LWR * (K_LWE + 1) + 1;
+                evmlr_enc_proof_init(&temp_remaining_proofs[i][l]->proof, L_curr_l);
+                evmlr_enc_proof_copy(&temp_remaining_proofs[i][l]->proof, &remaining_proofs[pi[i]][l]->proof);
+            }
+        }
+        for (slong i = 0; i < N; i++) {
+            for (slong l = 0; l < k_servers; l++) {
+                evmlr_enc_proof_clear(&remaining_proofs[i][l]->proof);
+            }
+            free(remaining_proofs[i]);
+            remaining_proofs[i] = temp_remaining_proofs[i];
+        }
+        free(temp_remaining_proofs);
+
+        // Generate Proof of Shuffle
+        uint64_t start_shuf_prove = cpucycles();
+        evmlr_shuffle_sp_t shuf_sp;
+        evmlr_shuffle_pp_t shuf_pp;
+
+        shuf_sp->pi = pi;
+        shuf_sp->d_dagger = d_dagger;
+        nmod_poly_mat_init(shuf_sp->r_D, 2*K_SIS, 1, MOD_Q);
+        evmlr_commit_sample_r(shuf_sp->r_D);
+
+        nmod_poly_mat_t d_flat;
+        nmod_poly_mat_init(d_flat, pp->shuf_ctx->com_ctx->N, 1, MOD_Q);
+        nmod_poly_mat_zero(d_flat);
+        slong row_len = (2*ETA) * (K_LWE + pp->L_max);
+        for (slong i = 0; i < N; i++) {
+            for (slong r = 0; r < row_len; r++) {
+                nmod_poly_struct* d_dag_ir = nmod_poly_mat_entry(shuf_sp->d_dagger[i], r, 0);
+                nmod_poly_struct* poly = nmod_poly_mat_entry(d_flat, i * row_len + r, 0);
+                nmod_poly_set(poly, d_dag_ir);
+            }
+        }
+        evmlr_commit(shuf_pp->D, d_flat, shuf_sp->r_D, pp->shuf_ctx->com_ctx);
+        nmod_poly_mat_clear(d_flat);
+
+        shuf_pp->c_hat = (nmod_poly_mat_t *) malloc(N * sizeof(nmod_poly_mat_t));
+        for (slong i = 0; i < N; i++) {
+            nmod_poly_mat_init(shuf_pp->c_hat[i], pp->L_max, 1, MOD_Q);
+            nmod_poly_mat_zero(shuf_pp->c_hat[i]);
+            for (slong r = 0; r < L_next; r++) {
+                nmod_poly_set(nmod_poly_mat_entry(shuf_pp->c_hat[i], r, 0), nmod_poly_mat_entry(shuffled_msgs[i], r, 0));
+            }
+        }
+        for (slong i = 0; i < N; i++) {
+            for (slong r = L_next; r < pp->L_max; r++) {
+                nmod_poly_struct* hat_val = nmod_poly_mat_entry(shuf_pp->c_hat[i], r, 0);
+                nmod_poly_struct* a_val = nmod_poly_mat_entry(a_mats[pi[i]], r, 0);
+                nmod_poly_neg(hat_val, a_val);
+            }
+        }
+
+        shuf_pp->c_star = (evmlr_otse_ciphertext_t *) malloc(N * sizeof(evmlr_otse_ciphertext_t));
+        for (slong i = 0; i < N; i++) {
+            nmod_poly_mat_init(shuf_pp->c_star[i]->c, pp->L_max, 1, MOD_Q);
+            nmod_poly_mat_zero(shuf_pp->c_star[i]->c);
+            for (slong r = 0; r < curr_cts[i].otse_cipher->c->r; r++) {
+                nmod_poly_set(nmod_poly_mat_entry(shuf_pp->c_star[i]->c, r, 0), nmod_poly_mat_entry(curr_cts[i].otse_cipher->c, r, 0));
+            }
+        }
+
+        evmlr_proof_init(shuffle_proofs[j], pp->shuf_ctx);
+        evmlr_shuffle_prove(shuffle_proofs[j], shuf_sp, shuf_pp, pp->shuf_ctx, state);
+        uint64_t end_shuf_prove = cpucycles();
+        total_shuffle_prove += (end_shuf_prove - start_shuf_prove);
+
+        // Verify Shuffle Proof
+        uint64_t start_shuf_verify = cpucycles();
+        int shuffle_ok = evmlr_shuffle_verify(shuffle_proofs[j], pp->shuf_ctx, shuf_pp);
+        uint64_t end_shuf_verify = cpucycles();
+        if (!shuffle_ok) {
+            printf("Warning: Shuffle verification failed at server %ld!\n", j);
+        }
+        total_shuffle_verify += (end_shuf_verify - start_shuf_verify);
+
+        // Clean up pp/sp
+        for (slong i = 0; i < N; i++) {
+            nmod_poly_mat_clear(shuf_pp->c_hat[i]);
+            nmod_poly_mat_clear(shuf_pp->c_star[i]->c);
+            nmod_poly_mat_clear(a_mats[i]);
+        }
+        free(shuf_pp->c_hat);
+        free(shuf_pp->c_star);
+        free(a_mats);
+        evmlr_commit_clear(shuf_pp->D);
+        nmod_poly_mat_clear(shuf_sp->r_D);
+        free(shuf_sp->pi);
+        for (slong i = 0; i < N; i++) {
+            nmod_poly_mat_clear(d_dagger[i]);
+        }
+        free(d_dagger);
+
+        if (j == k_servers - 1) {
+            for (slong i = 0; i < N; i++) {
+                nmod_poly_mat_init(results[i], L_next, 1, MOD_Q);
+                nmod_poly_mat_set(results[i], shuffled_msgs[i]);
+            }
+        } else {
+            slong L_next_ct = L_next;
+            for (slong i = 0; i < N; i++) {
+                evmlr_voting_layer_clear(&curr_cts[i]);
+                deserialize_layer(&curr_cts[i], shuffled_msgs[i], L_next_ct - K_LWR * (K_LWE + 1));
+            }
+        }
+
+        for (slong i = 0; i < N; i++) {
+            evmlr_enc_proof_clear(&curr_proofs[i]->proof);
+        }
+        free(curr_proofs);
+
+        for (slong i = 0; i < N; i++) {
+            nmod_poly_mat_clear(decrypted_msgs[i]);
+            nmod_poly_mat_clear(shuffled_msgs[i]);
+        }
+    }
+
+    printf("Peel & Verify Enc Proofs Phase (total for %ld servers): %lu cycles (avg %lu per server)\n",
+           k_servers, (unsigned long)total_dec_verify_enc, (unsigned long)(total_dec_verify_enc / k_servers));
+    printf("Shuffle Prove Phase (total for %ld servers): %lu cycles (avg %lu per server)\n",
+           k_servers, (unsigned long)total_shuffle_prove, (unsigned long)(total_shuffle_prove / k_servers));
+    printf("Shuffle Verify Phase (total for %ld servers): %lu cycles (avg %lu per server)\n",
+           k_servers, (unsigned long)total_shuffle_verify, (unsigned long)(total_shuffle_verify / k_servers));
+
+    // Calculate total cost and the percentage impact of each phase
+    uint64_t total_cycles = (end_setup - start_setup) + (end_casting - start_casting) +
+                            total_dec_verify_enc + total_shuffle_prove + total_shuffle_verify;
+    printf("\n--- Breakdown of Phases (%ld voters, %ld servers) ---\n", N, k_servers);
+    printf("Total protocol execution cost: %lu cycles\n", (unsigned long)total_cycles);
+    printf("  1. Setup Phase:                %5.2f%% (%lu cycles)\n",
+           100.0 * (double)(end_setup - start_setup) / (double)total_cycles, (unsigned long)(end_setup - start_setup));
+    printf("  2. Casting Phase:              %5.2f%% (%lu cycles)\n",
+           100.0 * (double)(end_casting - start_casting) / (double)total_cycles, (unsigned long)(end_casting - start_casting));
+    printf("  3. Decrypt & Verify ZK Enc:    %5.2f%% (%lu cycles)\n",
+           100.0 * (double)total_dec_verify_enc / (double)total_cycles, (unsigned long)total_dec_verify_enc);
+    printf("  4. Shuffle Proving:            %5.2f%% (%lu cycles)\n",
+           100.0 * (double)total_shuffle_prove / (double)total_cycles, (unsigned long)total_shuffle_prove);
+    printf("  5. Shuffle Verification:       %5.2f%% (%lu cycles)\n",
+           100.0 * (double)total_shuffle_verify / (double)total_cycles, (unsigned long)total_shuffle_verify);
+    printf("=======================================================================\n\n");
+
+    // Clean up
+    free(decrypted_msgs);
+    free(shuffled_msgs);
+    for (slong i = 0; i < N; i++) {
+        evmlr_voting_layer_clear(&curr_cts[i]);
+        for (slong l = 0; l < k_servers; l++) {
+            evmlr_enc_proof_clear(&remaining_proofs[i][l]->proof);
+        }
+        free(remaining_proofs[i]);
+        nmod_poly_mat_clear(votes[i]);
+        nmod_poly_mat_clear(results[i]);
+        evmlr_voting_submission_clear(subs[i], pp);
+    }
+    free(curr_cts);
+    free(remaining_proofs);
+    for (int i = 0; i < k_servers; i++) {
+        evmlr_proof_clear(shuffle_proofs[i], pp->shuf_ctx);
+    }
+    evmlr_voting_pp_clear(pp);
+    evmlr_voting_sk_clear(sk);
+}
+
 int main() {
     flint_rand_t state;
     flint_rand_init(state);
@@ -612,6 +893,7 @@ int main() {
     flint_rand_set_seed(state, seed[0], seed[1]);
 
     test_voting_protocol(state);
+    bench_voting_protocol(state);
 
     flint_rand_clear(state);
     return 0;

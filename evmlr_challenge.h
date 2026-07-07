@@ -19,7 +19,7 @@ void evmlr_challenge_add_matrix(evmlr_challenge_t chal, const nmod_poly_mat_t ma
 void evmlr_challenge_add_poly(evmlr_challenge_t chal, const nmod_poly_t poly);
 void evmlr_challenge_add_bytes(evmlr_challenge_t chal, const uint8_t* bytes, size_t len);
 
-void evmlr_challenge_get_poly_half(nmod_poly_t out, evmlr_challenge_t chal);
+void evmlr_challenge_get_poly(nmod_poly_t out, int degree, evmlr_challenge_t chal);
 void evmlr_challenge_get_poly_one_ternary(nmod_poly_t out, evmlr_challenge_t chal);
 void evmlr_challenge_get_poly_symmetric(nmod_poly_t out, evmlr_challenge_t chal);
 void evmlr_challenge_get_val(ulong* val, evmlr_challenge_t chal);

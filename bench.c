@@ -28,6 +28,7 @@ void bench_after() {
 	after = cpucycles();
 	result = (after - before);
 	total += result;
+	printf("%llu\n", result);
 }
 
 void bench_compute(int benches) {

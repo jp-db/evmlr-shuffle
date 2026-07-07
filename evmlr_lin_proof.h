@@ -5,6 +5,7 @@
 #include "flint/nmod_poly.h"
 #include "flint/nmod_poly_mat.h"
 #include "evmlr_params.h"
+#include "gaussian.h"
 
 // Context for the linear proof: A s_1 + s_2 = t
 struct evmlr_lin_proof_ctx_struct;
@@ -22,6 +23,16 @@ typedef struct evmlr_lin_proof_ctx_struct {
     mask_sampler_t sample_mask;
     rejection_check_t rejection_check;
     norm_check_t norm_check;
+    
+    // Gaussian fields
+    double sigma_1;
+    double sigma_2;
+    uint64_t s2_1;
+    uint64_t s2_2;
+    nmod_poly_mat_struct* v_1;
+    nmod_poly_mat_struct* v_2;
+    discrete_gaussian_ctx_t dg_ctx_1;
+    discrete_gaussian_ctx_t dg_ctx_2;
 } evmlr_lin_proof_ctx_struct;
 
 typedef evmlr_lin_proof_ctx_struct evmlr_lin_proof_ctx_t[1];
@@ -75,5 +86,6 @@ int evmlr_lin_verify(const evmlr_lin_proof_t proof,
                      const evmlr_lin_proof_ctx_t ctx);
 
 void evmlr_lin_proof_ctx_set_linear(evmlr_lin_proof_ctx_t ctx, slong beta);
+void evmlr_lin_proof_ctx_set_gaussian(evmlr_lin_proof_ctx_t ctx, double bound_infty);
 
 #endif // EVMLR_SHUFFLE_EVMLR_LIN_PROOF_H

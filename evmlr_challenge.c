@@ -41,11 +41,11 @@ static void ensure_seeded(evmlr_challenge_t chal) {
     }
 }
 
-void evmlr_challenge_get_poly_half(nmod_poly_t out, evmlr_challenge_t chal) {
+void evmlr_challenge_get_poly(nmod_poly_t out, int degree, evmlr_challenge_t chal) {
     ensure_seeded(chal);
     if (out) nmod_poly_zero(out);
     ulong buf;
-    for (int i = 0; i < (DEGREE_N >> 1); i++) {
+    for (int i = 0; i < degree; i++) {
         fastrandombytes((unsigned char *)&buf, sizeof(buf));
         if (out) nmod_poly_set_coeff_ui(out, i, buf % MOD_Q);
     }

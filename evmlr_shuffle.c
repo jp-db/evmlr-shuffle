@@ -81,9 +81,10 @@ static void get_challenges_1(nmod_poly_t alpha, nmod_poly_t beta, nmod_poly_t la
     }
     evmlr_challenge_add_matrix(chal, P->c);
 
-    evmlr_challenge_get_poly_half(alpha, chal);
-    evmlr_challenge_get_poly_half(beta, chal);
-    evmlr_challenge_get_poly_half(lambda, chal);
+    int degree = DEGREE_N >> 1;
+    evmlr_challenge_get_poly(alpha, degree, chal);
+    evmlr_challenge_get_poly(beta, degree, chal);
+    evmlr_challenge_get_poly(lambda, degree, chal);
 
     evmlr_challenge_get_hash(hash_out, chal);
 }
@@ -94,12 +95,13 @@ static void get_challenge_2(nmod_poly_t gamma, const uint8_t hash_in[SHA256HashS
     evmlr_challenge_add_bytes(chal, hash_in, SHA256HashSize);
     evmlr_challenge_add_matrix(chal, W->c);
 
-    evmlr_challenge_get_poly_half(gamma, chal);
+    evmlr_challenge_get_poly(gamma, DEGREE_N >> 1, chal);
 }
 
 static void prove_commit(evmlr_bin_proof_t proof, const evmlr_commit_ctx_t com_ctx, const nmod_poly_mat_t m, const nmod_poly_mat_t r, const nmod_poly_mat_t c, flint_rand_t state) {
     evmlr_bin_proof_ctx_t ctx;
     evmlr_bin_proof_ctx_init(ctx, K_SIS, 2 * K_SIS, com_ctx->N);
+    evmlr_bin_proof_ctx_set_gaussian(ctx);
 
     evmlr_bin_prove(proof, com_ctx->A_1, com_ctx->A_2, m, r, c, ctx, state);
 
@@ -109,6 +111,7 @@ static void prove_commit(evmlr_bin_proof_t proof, const evmlr_commit_ctx_t com_c
 static int verify_commit(const evmlr_bin_proof_t proof, const evmlr_commit_ctx_t com_ctx, const nmod_poly_mat_t c) {
     evmlr_bin_proof_ctx_t ctx;
     evmlr_bin_proof_ctx_init(ctx, K_SIS, 2 * K_SIS, com_ctx->N);
+    evmlr_bin_proof_ctx_set_gaussian(ctx);
 
     int valid = evmlr_bin_verify(proof, com_ctx->A_1, com_ctx->A_2, c, ctx);
 
@@ -251,6 +254,7 @@ static void prove_u(evmlr_lin_proof_t lin_proof, const nmod_poly_mat_t w_dagger[
 
     evmlr_lin_proof_ctx_t ctx_u;
     evmlr_lin_proof_ctx_init(ctx_u, N, N * cols_per_i);
+    evmlr_lin_proof_ctx_set_gaussian(ctx_u, ETA);
 
     nmod_poly_mat_t A_u, t_u;
     nmod_poly_mat_init(A_u, N, N * cols_per_i, MOD_Q);
@@ -282,6 +286,7 @@ static int verify_u(const evmlr_lin_proof_t lin_proof, const nmod_poly_mat_t u, 
     int cols_per_i = LOG_Q_CEIL + 1 + 2 * ETA * (K_LWE + ctx->L);
     evmlr_lin_proof_ctx_t ctx_u;
     evmlr_lin_proof_ctx_init(ctx_u, N, N * cols_per_i);
+    evmlr_lin_proof_ctx_set_gaussian(ctx_u, 1.0);
 
     nmod_poly_mat_t A_u, t_u;
     nmod_poly_mat_init(A_u, N, N * cols_per_i, MOD_Q);
@@ -677,7 +682,7 @@ void test(evmlr_shuffle_ctx_t ctx, flint_rand_t state) {
     evmlr_shuffle_pp_t pp;
     setup(sp, pp, ctx, state);
 
-    TEST_BEGIN("shuffle proof works") {
+    TEST_ONCE("shuffle proof works") {
         TEST_ASSERT(evmlr_shuffle_run(sp, pp, ctx, state) == 1, end)
     } TEST_END;
 
