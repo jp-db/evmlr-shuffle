@@ -1,5 +1,6 @@
 # evmlr-shuffle
 
+
 Implementation of the Proof of Shuffle and primitives of the paper "Efficient Verifiable Mixnets from Lattices,
 Revisited" by Jonathan Bootle, Vadim Lyubashevsky, and Antonio Merino-Gallardo (https://eprint.iacr.org/2025/658).
 
@@ -12,7 +13,7 @@ The implementation includes the necessary primitives and algorithms to create an
 
 FLINT is required to run the code in this repository. 
 We recommend installing FLINT via the package manager or directly from the [FLINT website](http://flintlib.org/).
-The code has been tested with FLINT version 3.3.1.
+The code has been tested with FLINT versions 3.3.1 and 3.6.0.
 
 ## Primitives
 
@@ -25,18 +26,37 @@ The implementation includes the following key primitives:
 
 ## Running the Code
 
-To compile and execute the code just run `make` in the root directory. 
-This will compile the source files and run the executables for the primitives and the Proof of Shuffle.
+`make` compiles every binary; it no longer runs anything, so it is safe to use
+as a quick syntax check. Parallel builds are supported: `make -j$(nproc)`.
 
-To run the tests of a single file, you can execute `make <primitive lowercase>` or `make shuffle`.
+| Command | What it does |
+| --- | --- |
+| `make` / `make build` | Compile every binary |
+| `make test` | Run the test suites only — fast, this is the inner development loop |
+| `make bench` | Run the benchmark suites only — slow |
+| `make run` | Run tests and benchmarks for every binary (the old `make` behaviour) |
+| `make <name>` | Build and run one binary, e.g. `make shuffle` or `make commit` |
+| `make help` | List the available targets |
+| `make clean` | Remove build artifacts |
 
-To tweak the parameters of the schemes, mainly the number of messages, you can modify the `evmlr_params.h` in the root directory.
+The binaries themselves take an optional mode argument, so a single component
+can be exercised directly:
+
+```sh
+./evmlr_shuffle.bin test    # tests only
+./evmlr_shuffle.bin bench   # benchmarks only
+./evmlr_shuffle.bin         # both (same as `all`)
+```
+
+Test failures are reported through the exit status, so `make test` fails loudly
+and can be wired into CI.
+
 
 ## TODO
 
 - [ ] Optimize the implementation for performance (consider using the chinese remainder theorem).
 - [ ] Add more detailed documentation and comments in the code.
-- [ ] Separate the tests and benchmarks from the main implementation.
+- [ ] Separate the tests and benchmarks into their own files (they can already be run independently via `make test` / `make bench`, but still live behind `#ifdef MAIN` in the implementation files).
 - [ ] Fix a bug where if a proof of shuffle is run multiple times it sometimes fails (this is likely due to a variable changing state unexpectedly).
 - [ ] Run in the proof of shuffle in zero-knowledge, instead of only verifying the mathematical correctness.
 - [ ] Turn the proof of shuffle into a non-interactive proof using the Fiat-Shamir with Aborts.

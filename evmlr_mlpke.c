@@ -129,6 +129,7 @@ void evmlr_mlpke_cipher_clear(evmlr_mlpke_cipher_t cipher) {
 }
 
 #ifdef MAIN
+#include "evmlr_main.h"
 static void test(flint_rand_t rand, evmlr_mlpke_ctx_t ctx) {
     evmlr_mlpke_keypair_t keypair;
     evmlr_mlpke_cipher_t cipher;
@@ -190,22 +191,21 @@ static void bench(flint_rand_t rand, evmlr_mlpke_ctx_t ctx) {
 }
 
 
-int main() {
+int main(int argc, char *argv[]) {
+    evmlr_mode_t mode = evmlr_mode(argc, argv);
+
     flint_rand_t state;
-    flint_rand_init(state);
-    ulong seed[2];
-    getrandom(seed, sizeof(ulong)*2, 0);
-    flint_rand_set_seed(state, seed[0], seed[1]);
+    evmlr_rand_init(state);
 
     evmlr_mlpke_ctx_t ctx;
     evmlr_mlpke_ctx_init(ctx);
 
-    test(state, ctx);
-    bench(state, ctx);
+    if (evmlr_runs_tests(mode))   test(state, ctx);
+    if (evmlr_runs_benches(mode)) bench(state, ctx);
 
     evmlr_mlpke_ctx_clear(ctx);
     flint_rand_clear(state);
 
-    return 0;
+    return test_status();
 }
 #endif

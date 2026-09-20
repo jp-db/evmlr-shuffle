@@ -359,6 +359,7 @@ int evmlr_lin_verify(const evmlr_lin_proof_t proof,
 }
 
 #ifdef MAIN
+#include "evmlr_main.h"
 
 #include "test.h"
 #include "bench.h"
@@ -468,22 +469,21 @@ void bench(evmlr_lin_proof_ctx_t ctx, flint_rand_t state) {
     evmlr_lin_proof_clear(proof);
 }
 
-int main() {
+int main(int argc, char *argv[]) {
+    evmlr_mode_t mode = evmlr_mode(argc, argv);
+
     flint_rand_t state;
-    flint_rand_init(state);
-    ulong seed[2];
-    getrandom(seed, sizeof(ulong)*2, 0);
-    flint_rand_set_seed(state, seed[0], seed[1]);
+    evmlr_rand_init(state);
 
     evmlr_lin_proof_ctx_t ctx;
     evmlr_lin_proof_ctx_init(ctx, K_LWE, K_SIS); // Just some sample dimensions for testing
 
-    test(ctx, state);
-    bench(ctx, state);
+    if (evmlr_runs_tests(mode))   test(ctx, state);
+    if (evmlr_runs_benches(mode)) bench(ctx, state);
 
     evmlr_lin_proof_ctx_clear(ctx);
     flint_rand_clear(state);
-    return 0;
+    return test_status();
 }
 
 #endif

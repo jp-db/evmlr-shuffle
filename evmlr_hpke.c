@@ -57,6 +57,7 @@ void evmlr_hpke_cipher_clear(evmlr_hpke_cipher_t cipher) {
 }
 
 #ifdef MAIN
+#include "evmlr_main.h"
 static void test(flint_rand_t rand, evmlr_hpke_ctx_t ctx) {
     evmlr_hpke_keypair_t keypair;
     evmlr_hpke_keypair_gen(keypair, rand, ctx);
@@ -67,7 +68,7 @@ static void test(flint_rand_t rand, evmlr_hpke_ctx_t ctx) {
 
     evmlr_hpke_cipher_t cipher;
     TEST_BEGIN("encryption and decryption are consistent") {
-        evmlr_hpke_encrypt(cipher, nullptr, msg, keypair->enc_keypair->pk, ctx, rand);
+        evmlr_hpke_encrypt(cipher, NULL, msg, keypair->enc_keypair->pk, ctx, rand);
         evmlr_hpke_decrypt(decrypted_msg, cipher, keypair->enc_keypair->sk, ctx);
         TEST_ASSERT(nmod_poly_mat_equal(msg, decrypted_msg) == 1, end)
     } TEST_END;
@@ -96,7 +97,7 @@ static void bench(flint_rand_t rand, evmlr_hpke_ctx_t ctx) {
     } BENCH_END;
 
     BENCH_BEGIN("evmlr_hpke_encrypt") {
-        BENCH_ADD(evmlr_hpke_encrypt(cipher, nullptr, msg, keypair->enc_keypair->pk, ctx, rand))
+        BENCH_ADD(evmlr_hpke_encrypt(cipher, NULL, msg, keypair->enc_keypair->pk, ctx, rand))
     } BENCH_END;
 
     BENCH_BEGIN("evmlr_hpke_decrypt") {
@@ -110,22 +111,21 @@ static void bench(flint_rand_t rand, evmlr_hpke_ctx_t ctx) {
     nmod_poly_mat_clear(decrypted_msg);
 }
 
-int main() {
+int main(int argc, char *argv[]) {
+    evmlr_mode_t mode = evmlr_mode(argc, argv);
+
     flint_rand_t state;
-    flint_rand_init(state);
-    ulong seed[2];
-    getrandom(seed, sizeof(ulong)*2, 0);
-    flint_rand_set_seed(state, seed[0], seed[1]);
+    evmlr_rand_init(state);
 
     evmlr_hpke_ctx_t ctx;
     evmlr_hpke_ctx_init(ctx, M_LEN, state);
 
-    test(state, ctx);
-    bench(state, ctx);
+    if (evmlr_runs_tests(mode))   test(state, ctx);
+    if (evmlr_runs_benches(mode)) bench(state, ctx);
 
     evmlr_hpke_ctx_clear(ctx);
     flint_rand_clear(state);
 
-    return 0;
+    return test_status();
 }
 #endif

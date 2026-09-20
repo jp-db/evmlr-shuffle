@@ -808,6 +808,7 @@ int evmlr_bin_verify(const evmlr_bin_proof_t proof,
 }
 
 #ifdef MAIN
+#include "evmlr_main.h"
 
 #include "test.h"
 #include "bench.h"
@@ -870,25 +871,26 @@ void test_bin(evmlr_bin_proof_ctx_t ctx, flint_rand_t state) {
         evmlr_commit_ctx_clear(com_ctx);
 }
 
-int main() {
+int main(int argc, char *argv[]) {
+    evmlr_mode_t mode = evmlr_mode(argc, argv);
+
     flint_rand_t state;
-    flint_rand_init(state);
-    ulong seed[2];
-    getrandom(seed, sizeof(ulong)*2, 0);
-    flint_rand_set_seed(state, seed[0], seed[1]);
+    evmlr_rand_init(state);
 
     evmlr_bin_proof_ctx_t ctx;
     evmlr_bin_proof_ctx_init(ctx, K_SIS, 2 * K_SIS, M_LEN);
 
-    // Test with linear sampling
-    test_bin(ctx, state);
+    if (evmlr_runs_tests(mode)) {
+        // Test with linear sampling
+        test_bin(ctx, state);
 
-    // Test with Gaussian sampling
-    evmlr_bin_proof_ctx_set_gaussian(ctx);
-    test_bin(ctx, state);
+        // Test with Gaussian sampling
+        evmlr_bin_proof_ctx_set_gaussian(ctx);
+        test_bin(ctx, state);
+    }
 
     evmlr_bin_proof_ctx_clear(ctx);
     flint_rand_clear(state);
-    return 0;
+    return test_status();
 }
 #endif

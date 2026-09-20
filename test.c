@@ -26,6 +26,11 @@ static int default_color;
 /*============================================================================*/
 
 /**
+ * Number of tests that have failed so far in this process.
+ */
+static int failures = 0;
+
+/**
  * Color of the string printed when the test fails (red).
  */
 #ifdef _MSC_VER
@@ -119,6 +124,7 @@ static void reset_font(void) {
 /*============================================================================*/
 
 void test_fail(void) {
+	failures++;
 	fail_font();
 	printf("[FAIL]\n");
 	reset_font();
@@ -128,4 +134,8 @@ void test_pass(void) {
 	pass_font();
 	printf("[PASS]\n");
 	reset_font();
+}
+
+int test_status(void) {
+	return (failures == 0) ? 0 : 1;
 }

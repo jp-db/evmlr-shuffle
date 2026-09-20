@@ -622,6 +622,7 @@ int evmlr_shuffle_run(evmlr_shuffle_sp_t sp, evmlr_shuffle_pp_t pp, const evmlr_
 }
 
 #ifdef MAIN
+#include "evmlr_main.h"
 void setup(evmlr_shuffle_sp_t sp, evmlr_shuffle_pp_t pp, const evmlr_shuffle_ctx_t ctx, flint_rand_t state) {
     slong N = ctx->N;
     slong L = ctx->L;
@@ -704,23 +705,22 @@ void bench(evmlr_shuffle_ctx_t ctx, flint_rand_t state) {
     evmlr_shuffle_clear_pp(pp, ctx);
 }
 
-int main() {
+int main(int argc, char *argv[]) {
     slong n_messages = SHUFFLE_N_MSGS;
 
+    evmlr_mode_t mode = evmlr_mode(argc, argv);
+
     flint_rand_t state;
-    flint_rand_init(state);
-    ulong seed[2];
-    getrandom(seed, sizeof(ulong)*2, 0);
-    flint_rand_set_seed(state, seed[0], seed[1]);
+    evmlr_rand_init(state);
 
     evmlr_shuffle_ctx_t ctx;
     evmlr_shuffle_ctx_init(ctx, n_messages, M_LEN, state);
 
-    test(ctx, state);
-    bench(ctx, state);
+    if (evmlr_runs_tests(mode))   test(ctx, state);
+    if (evmlr_runs_benches(mode)) bench(ctx, state);
 
     evmlr_shuffle_ctx_clear(ctx);
     flint_rand_clear(state);
-    return 0;
+    return test_status();
 }
 #endif

@@ -61,7 +61,7 @@ void evmlr_otse_encrypt(evmlr_otse_ciphertext_t ct, nmod_poly_mat_t d_dagger, co
 void evmlr_otse_decrypt(nmod_poly_mat_t m, const evmlr_otse_ciphertext_t ct, const evmlr_otse_key_t key, const evmlr_otse_ctx_t ctx) {
     nmod_poly_mat_t a;
     nmod_poly_mat_init(a, ctx->L, 1, MOD_Q);
-    calc_a(a, nullptr, key, ctx);
+    calc_a(a, NULL, key, ctx);
     // m = c - a
     nmod_poly_mat_init(m, ctx->L, 1, MOD_Q);
     nmod_poly_mat_sub(m, ct->c, a);
@@ -174,6 +174,7 @@ void evmlr_calc_a(nmod_poly_mat_t a, const nmod_poly_mat_t d_stack, const evmlr_
 }
 
 #ifdef MAIN
+#include "evmlr_main.h"
 void test(flint_rand_t rand, evmlr_otse_ctx_t ctx) {
     evmlr_otse_key_t key;
     evmlr_otse_keygen(key, rand);
@@ -184,7 +185,7 @@ void test(flint_rand_t rand, evmlr_otse_ctx_t ctx) {
 
     evmlr_otse_ciphertext_t ct;
     TEST_BEGIN("encryption and decryption are consistent") {
-        evmlr_otse_encrypt(ct, nullptr, msg, key, ctx);
+        evmlr_otse_encrypt(ct, NULL, msg, key, ctx);
         evmlr_otse_decrypt(decrypted_msg, ct, key, ctx);
         TEST_ASSERT(nmod_poly_mat_equal(msg, decrypted_msg) == 1, end)
     } TEST_END;
@@ -208,7 +209,7 @@ void bench(flint_rand_t rand, evmlr_otse_ctx_t ctx) {
 
     evmlr_otse_ciphertext_t ct;
     BENCH_BEGIN("evmlr_otse_encrypt") {
-        BENCH_ADD(evmlr_otse_encrypt(ct, nullptr, msg, key, ctx))
+        BENCH_ADD(evmlr_otse_encrypt(ct, NULL, msg, key, ctx))
     } BENCH_END;
 
     nmod_poly_mat_t decrypted_msg;
@@ -222,22 +223,21 @@ void bench(flint_rand_t rand, evmlr_otse_ctx_t ctx) {
     nmod_poly_mat_clear(decrypted_msg);
 }
 
-int main() {
+int main(int argc, char *argv[]) {
+    evmlr_mode_t mode = evmlr_mode(argc, argv);
+
     flint_rand_t state;
-    flint_rand_init(state);
-    ulong seed[2];
-    getrandom(seed, sizeof(ulong)*2, 0);
-    flint_rand_set_seed(state, seed[0], seed[1]);
+    evmlr_rand_init(state);
 
     evmlr_otse_ctx_t ctx;
     evmlr_otse_ctx_init(ctx, M_LEN, state);
 
-    test(state, ctx);
-    bench(state, ctx);
+    if (evmlr_runs_tests(mode))   test(state, ctx);
+    if (evmlr_runs_benches(mode)) bench(state, ctx);
 
     evmlr_otse_ctx_clear(ctx);
     flint_rand_clear(state);
-    return 0;
+    return test_status();
 }
 #endif
 
