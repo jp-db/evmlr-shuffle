@@ -33,7 +33,12 @@ void evmlr_utils_poly_decompose(nmod_poly_mat_t bin_vec, slong mat_col, const nm
 // R_q^N \times \N -> (R_q^N)^*. Binary decomposition of (a vector of) ring elements
 /**
  * Decomposes a vector of polynomials into b binary polynomial vectors.
- * @param bin_vec Output array of (nmod_poly_t *) vectors, size b.
+ *
+ * The caller owns @p bin_vec and must have initialised it as a
+ * b x nmod_poly_mat_nrows(ring_vec) matrix over modulus 2, and must clear it.
+ * Any previous contents are overwritten.
+ *
+ * @param bin_vec Output matrix, b rows (one per bit plane), initialised by the caller.
  * @param ring_vec Input array of polynomials to be decomposed.
  * @param b Number of bits for the binary decomposition.
  */
@@ -41,17 +46,23 @@ void evmlr_utils_ring_to_bin(nmod_poly_mat_t bin_vec, const nmod_poly_mat_t ring
 
 /**
  * Stacks the binary vectors into a single vector.
- * @param stack output stacked vector of length bits * len
+ *
+ * The caller owns @p stack and must have initialised it with
+ * bin_vec->r * bin_vec->c rows and one column, and must clear it.
+ *
+ * @param stack output stacked vector of length bits * len, initialised by the caller
  * @param bin_vec input binary vectors of size bits, each of length len
- * @param mod modulus for the polynomials
  */
-void evmlr_utils_stack(nmod_poly_mat_t stack, const nmod_poly_mat_t bin_vec, ulong mod);
+void evmlr_utils_stack(nmod_poly_mat_t stack, const nmod_poly_mat_t bin_vec);
 
 /**
  * Creates the Gadget matrix G of size N x (b*N) as defined in the paper.
  * G = (I_N | 2*I_N | ... | -2^(b-1)*I_N)
  *
- * @param G         The output nmod_poly_mat_t matrix, must be uninitialized.
+ * The caller owns @p G and must have initialised it as an N x (b*N) matrix over
+ * @p mod, and must clear it. Any previous contents are overwritten.
+ *
+ * @param G         The output nmod_poly_mat_t matrix, initialised by the caller.
  * @param N         The dimension of the identity matrix blocks.
  * @param b         The number of blocks (bits for decomposition).
  * @param mod       The modulus for the polynomial coefficients.
@@ -60,7 +71,7 @@ void evmlr_utils_gadget_matrix(nmod_poly_mat_t G, slong N, int b, ulong mod);
 
 
 /**
- * Compress polynomials mapping points to boundaries in S (alpha = 259)
+ * Compress polynomials mapping points to boundaries in S (bucket width ALPHA)
  */
 void evmlr_utils_highs_mat(nmod_poly_mat_t out, const nmod_poly_mat_t in);
 void evmlr_utils_lows_mat(nmod_poly_mat_t out, const nmod_poly_mat_t in);

@@ -258,6 +258,7 @@ void test_enc_proof(flint_rand_t state) {
     nmod_poly_t e3_polys[K_LWR];
 
     evmlr_hpke_cipher_t cipher;
+    evmlr_hpke_cipher_init(cipher, hpke_ctx->otse_ctx->L);
     for (int i = 0; i < K_LWR; i++) {
         nmod_poly_mat_init(r_mats[i], 1, K_LWE, MOD_Q);
         nmod_poly_mat_init(e2_mats[i], 1, K_LWE, MOD_Q);
@@ -330,6 +331,7 @@ void bench_enc_proof(flint_rand_t state) {
     nmod_poly_t e3_polys[K_LWR];
 
     evmlr_hpke_cipher_t cipher;
+    evmlr_hpke_cipher_init(cipher, hpke_ctx->otse_ctx->L);
     for (int i = 0; i < K_LWR; i++) {
         nmod_poly_mat_init(r_mats[i], 1, K_LWE, MOD_Q);
         nmod_poly_mat_init(e2_mats[i], 1, K_LWE, MOD_Q);
@@ -416,6 +418,7 @@ void bench_layered_enc_proof(flint_rand_t state) {
         nmod_poly_t e3_polys[K_LWR];
 
         evmlr_hpke_cipher_t cipher;
+        evmlr_hpke_cipher_init(cipher, hpke_ctx->otse_ctx->L);
         for (int i = 0; i < K_LWR; i++) {
             nmod_poly_mat_init(r_mats[i], 1, K_LWE, MOD_Q);
             nmod_poly_mat_init(e2_mats[i], 1, K_LWE, MOD_Q);

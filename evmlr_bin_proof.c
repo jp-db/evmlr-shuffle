@@ -200,9 +200,10 @@ int evmlr_bin_prove(evmlr_bin_proof_t proof,
     nmod_poly_set(nmod_poly_mat_entry(g_vec, 0, 0), g);
 
     nmod_poly_mat_t r_g;
+    nmod_poly_mat_init(r_g, 2 * K_SIS, 1, MOD_Q);
     evmlr_commit_sample_r(r_g);
-    
-    nmod_poly_mat_clear(proof->c_g->c); // clear first to avoid leak
+
+    // c_g was initialised by evmlr_bin_proof_init; evmlr_commit only fills it in.
     evmlr_commit(proof->c_g, g_vec, r_g, com_ctx);
 
     // 2. Prover samples masking vectors
@@ -242,6 +243,7 @@ int evmlr_bin_prove(evmlr_bin_proof_t proof,
     nmod_poly_mat_init(g1_vec, ctx->L, 1, MOD_Q);
 
     nmod_poly_mat_t r_g1;
+    nmod_poly_mat_init(r_g1, 2 * K_SIS, 1, MOD_Q);
 
     nmod_poly_mat_t y_g1_vec;
     nmod_poly_mat_init(y_g1_vec, ctx->L, 1, MOD_Q);
@@ -390,7 +392,7 @@ int evmlr_bin_prove(evmlr_bin_proof_t proof,
         nmod_poly_set(nmod_poly_mat_entry(g1_vec, 0, 0), g_1);
 
         evmlr_commit_sample_r(r_g1);
-        nmod_poly_mat_clear(proof->c_g1->c); // clear first to avoid leak
+        // c_g1 was initialised by evmlr_bin_proof_init.
         evmlr_commit(proof->c_g1, g1_vec, r_g1, com_ctx);
 
         // w_g1
@@ -561,7 +563,6 @@ int evmlr_bin_prove(evmlr_bin_proof_t proof,
             if (!evmlr_utils_is_bounded(proof->z_rg1, ctx->beta)) success = 0;
         }
 
-        nmod_poly_mat_clear(r_g1);
     }
 
     // Cleanup
@@ -577,6 +578,7 @@ int evmlr_bin_prove(evmlr_bin_proof_t proof,
     nmod_poly_clear(g);
     nmod_poly_mat_clear(g_vec);
     nmod_poly_mat_clear(r_g);
+    nmod_poly_mat_clear(r_g1);
     nmod_poly_mat_clear(y_m);
     nmod_poly_mat_clear(y_r);
     nmod_poly_mat_clear(y_rg);
@@ -850,6 +852,7 @@ void test_bin(evmlr_bin_proof_ctx_t ctx, flint_rand_t state) {
     nmod_poly_init(com_ctx->cyclo_poly, MOD_Q);
     nmod_poly_set(com_ctx->cyclo_poly, ctx->cyclo_poly);
 
+    evmlr_commit_init(com_c);
     evmlr_commit(com_c, m, r, com_ctx);
 
     evmlr_bin_proof_init(proof, ctx);

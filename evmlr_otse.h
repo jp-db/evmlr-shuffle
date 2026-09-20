@@ -32,6 +32,10 @@ void evmlr_otse_keyclear(evmlr_otse_key_t key);
 // a = H' * B^(n) d_dagger
 void evmlr_calc_a(nmod_poly_mat_t a, const nmod_poly_mat_t d_stack, const evmlr_otse_ctx_t ctx);
 
+// Initialises a ciphertext of length L. The caller owns it and must clear it
+// with evmlr_otse_ciphertext_clear; encryption only fills it in.
+void evmlr_otse_ciphertext_init(evmlr_otse_ciphertext_t ct, slong L);
+
 void evmlr_otse_encrypt(evmlr_otse_ciphertext_t ct, nmod_poly_mat_t d_dagger, const nmod_poly_mat_t m,
                         const evmlr_otse_key_t key, const evmlr_otse_ctx_t ctx);
 

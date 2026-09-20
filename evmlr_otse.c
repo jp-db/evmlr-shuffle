@@ -50,10 +50,13 @@ void evmlr_otse_keyclear(evmlr_otse_key_t key) {
     nmod_poly_mat_clear(key->s);
 }
 
+void evmlr_otse_ciphertext_init(evmlr_otse_ciphertext_t ct, slong L) {
+    nmod_poly_mat_init(ct->c, L, 1, MOD_Q);
+}
+
 void evmlr_otse_encrypt(evmlr_otse_ciphertext_t ct, nmod_poly_mat_t d_dagger, const nmod_poly_mat_t m,
                         const evmlr_otse_key_t key, const evmlr_otse_ctx_t ctx) {
-    // c = m + a
-    nmod_poly_mat_init(ct->c, ctx->L, 1, MOD_Q);
+    // c = m + a (ct is owned by the caller)
     calc_a(ct->c, d_dagger, key, ctx);
     nmod_poly_mat_add(ct->c, m, ct->c);
 }
@@ -62,8 +65,7 @@ void evmlr_otse_decrypt(nmod_poly_mat_t m, const evmlr_otse_ciphertext_t ct, con
     nmod_poly_mat_t a;
     nmod_poly_mat_init(a, ctx->L, 1, MOD_Q);
     calc_a(a, NULL, key, ctx);
-    // m = c - a
-    nmod_poly_mat_init(m, ctx->L, 1, MOD_Q);
+    // m = c - a (m is owned by the caller)
     nmod_poly_mat_sub(m, ct->c, a);
 
     nmod_poly_mat_clear(a);
@@ -110,8 +112,7 @@ void calc_d(nmod_poly_mat_t d, const nmod_poly_mat_t H, const nmod_poly_mat_t s,
     nmod_poly_mat_init(Hs, K_LWE + L, 1, MOD_Q);
     nmod_poly_mat_mulmod(Hs, H, s, cyclo_poly);
 
-    // d = Hs * q2/q1 mod q2
-    nmod_poly_mat_init(d, K_LWE + L, 1, MOD_Q);
+    // d = Hs * q2/q1 mod q2 (d is owned by the caller)
     for (int i = 0; i < K_LWE + L; i++) {
         nmod_poly_struct* d_i = nmod_poly_mat_entry(d, i, 0);
         nmod_poly_struct* Hs_i = nmod_poly_mat_entry(Hs, i, 0);
@@ -123,9 +124,8 @@ void calc_d(nmod_poly_mat_t d, const nmod_poly_mat_t H, const nmod_poly_mat_t s,
     nmod_poly_mat_clear(Hs);
 }
 
-void multiply_by_B_eta(nmod_poly_mat_t w, const nmod_poly_mat_t d, slong L, ulong mod) {
-    nmod_poly_mat_init(w, K_LWE + L, 1, mod);
-    nmod_poly_mat_zero(w);
+void multiply_by_B_eta(nmod_poly_mat_t w, const nmod_poly_mat_t d, slong L) {
+    nmod_poly_mat_zero(w); // w is owned by the caller
     // Accumulate the first eta vectors
     for (int i = 0; i < K_LWE + L; i++) {
         nmod_poly_struct* w_i = nmod_poly_mat_entry(w, i, 0);
@@ -146,17 +146,20 @@ void multiply_by_B_eta(nmod_poly_mat_t w, const nmod_poly_mat_t d, slong L, ulon
 
 void calc_a(nmod_poly_mat_t a, nmod_poly_mat_t d_dagger, const evmlr_otse_key_t key, const evmlr_otse_ctx_t ctx) {
     nmod_poly_mat_t d, d_bin;
+    nmod_poly_mat_init(d, K_LWE + ctx->L, 1, MOD_Q);
     calc_d(d, ctx->H, key->s, ctx->cyclo_poly, ctx->L); // d = ⌈Hs⌋_{2^ZETA →2^{2η}}
     int bits = 2 * ETA;
+    nmod_poly_mat_init(d_bin, bits, nmod_poly_mat_nrows(d), 2);
     evmlr_utils_ring_to_bin(d_bin, d, bits);
 
-    // a = H' B^n stack(d)
+    // a = H' B^n stack(d); d_dagger, when given, is owned by the caller.
     if (d_dagger != NULL) {
-        evmlr_utils_stack(d_dagger, d_bin, MOD_Q); // d_dagger = stack(d_bin)
+        evmlr_utils_stack(d_dagger, d_bin); // d_dagger = stack(d_bin)
         evmlr_calc_a(a, d_dagger, ctx);
     } else {
         nmod_poly_mat_t tmp_dagger;
-        evmlr_utils_stack(tmp_dagger, d_bin, MOD_Q); // d_dagger = stack(d_bin)
+        nmod_poly_mat_init(tmp_dagger, d_bin->r * d_bin->c, 1, MOD_Q);
+        evmlr_utils_stack(tmp_dagger, d_bin); // d_dagger = stack(d_bin)
         evmlr_calc_a(a, tmp_dagger, ctx);
         nmod_poly_mat_clear(tmp_dagger);
     }
@@ -167,7 +170,8 @@ void calc_a(nmod_poly_mat_t a, nmod_poly_mat_t d_dagger, const evmlr_otse_key_t 
 void evmlr_calc_a(nmod_poly_mat_t a, const nmod_poly_mat_t d_stack, const evmlr_otse_ctx_t ctx) {
     // w = B_eta stack(d)
     nmod_poly_mat_t w;
-    multiply_by_B_eta(w, d_stack, ctx->L, MOD_Q);
+    nmod_poly_mat_init(w, K_LWE + ctx->L, 1, MOD_Q);
+    multiply_by_B_eta(w, d_stack, ctx->L);
     // a = H' w
     nmod_poly_mat_mulmod(a, ctx->H_prime, w, ctx->cyclo_poly);
     nmod_poly_mat_clear(w);
@@ -181,9 +185,11 @@ void test(flint_rand_t rand, evmlr_otse_ctx_t ctx) {
 
     nmod_poly_mat_t msg, decrypted_msg;
     nmod_poly_mat_init(msg, ctx->L, 1, MOD_Q);
+    nmod_poly_mat_init(decrypted_msg, ctx->L, 1, MOD_Q);
     nmod_poly_mat_randtest(msg, rand, DEGREE_N);
 
     evmlr_otse_ciphertext_t ct;
+    evmlr_otse_ciphertext_init(ct, ctx->L);
     TEST_BEGIN("encryption and decryption are consistent") {
         evmlr_otse_encrypt(ct, NULL, msg, key, ctx);
         evmlr_otse_decrypt(decrypted_msg, ct, key, ctx);
@@ -208,11 +214,13 @@ void bench(flint_rand_t rand, evmlr_otse_ctx_t ctx) {
     nmod_poly_mat_randtest(msg, rand, DEGREE_N);
 
     evmlr_otse_ciphertext_t ct;
+    evmlr_otse_ciphertext_init(ct, ctx->L);
     BENCH_BEGIN("evmlr_otse_encrypt") {
         BENCH_ADD(evmlr_otse_encrypt(ct, NULL, msg, key, ctx))
     } BENCH_END;
 
     nmod_poly_mat_t decrypted_msg;
+    nmod_poly_mat_init(decrypted_msg, ctx->L, 1, MOD_Q);
     BENCH_BEGIN("evmlr_otse_decrypt") {
         BENCH_ADD(evmlr_otse_decrypt(decrypted_msg, ct, key, ctx))
     } BENCH_END;

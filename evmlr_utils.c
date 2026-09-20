@@ -177,7 +177,6 @@ void evmlr_utils_poly_decompose(nmod_poly_mat_t bin_vec, slong mat_col, const nm
 void evmlr_utils_ring_to_bin(nmod_poly_mat_t bin_vec, const nmod_poly_mat_t d_vec, int b) {
     slong N = nmod_poly_mat_nrows(d_vec);
     ulong q = nmod_poly_mat_modulus(d_vec);
-    slong mod = 2; // Output is binary
 
     fmpz_t coeff_fmpz, two_pow_b;
     fmpz_init(coeff_fmpz);
@@ -193,11 +192,13 @@ void evmlr_utils_ring_to_bin(nmod_poly_mat_t bin_vec, const nmod_poly_mat_t d_ve
         }
     }
 
-    // d_bits matrix will have b rows (one for each bit plane) and N columns
-    nmod_poly_mat_init(bin_vec, b, N, mod);
+    // bin_vec is owned by the caller and has b rows (one per bit plane) and N
+    // columns; reset it so that reusing a matrix does not keep stale bits.
     for(slong r=0; r < b; r++) {
         for (slong c=0; c < N; c++) {
-            nmod_poly_init2(nmod_poly_mat_entry(bin_vec, r, c), max_degree + 1, mod);
+            nmod_poly_struct* entry = nmod_poly_mat_entry(bin_vec, r, c);
+            nmod_poly_zero(entry);
+            nmod_poly_fit_length(entry, max_degree + 1);
         }
     }
 
@@ -230,8 +231,7 @@ void evmlr_utils_ring_to_bin(nmod_poly_mat_t bin_vec, const nmod_poly_mat_t d_ve
     fmpz_clear(two_pow_b);
 }
 
-void evmlr_utils_stack(nmod_poly_mat_t stack, const nmod_poly_mat_t bin_vec, ulong mod) {
-    nmod_poly_mat_init(stack, bin_vec->c * bin_vec->r, 1, mod);
+void evmlr_utils_stack(nmod_poly_mat_t stack, const nmod_poly_mat_t bin_vec) {
     for (slong b = 0; b < bin_vec->r; b++) {
         for (slong i = 0; i < bin_vec->c; i++) {
             nmod_poly_struct* stack_entry = nmod_poly_mat_entry(stack, b * bin_vec->c + i, 0);
@@ -258,8 +258,9 @@ void evmlr_utils_sample_binary_poly_mat(nmod_poly_mat_t mat, slong degree, flint
 
 void evmlr_utils_gadget_matrix(nmod_poly_mat_t G, slong N, int b, ulong mod) {
     // The Gadget matrix has N rows and b*N columns.
-    slong G_cols = b * N;
-    nmod_poly_mat_init(G, N, G_cols, mod); // Initializes all entries to zero polynomials
+    // G is owned by the caller and is N x (b*N); only the block diagonals are
+    // written below, so everything else has to start out zero.
+    nmod_poly_mat_zero(G);
 
     // Iterate through each of the 'b' blocks
     for (int j = 0; j < b; j++) {
@@ -297,16 +298,22 @@ nmod_poly_struct* nmod_poly_vec_entry(const nmod_poly_mat_t mat, slong i) {
     return nmod_poly_mat_entry(mat, i, 0);
 }
 
+
+// ALPHA must divide MOD_Q - 1 and be even; see the note in evmlr_params.h.
+_Static_assert((MOD_Q - 1) % ALPHA == 0, "ALPHA must divide MOD_Q - 1");
+_Static_assert(ALPHA % 2 == 0 || ALPHA == 259,
+    "ALPHA must be even; odd ALPHA breaks the one-bit hint (259 is the legacy value)");
+
 static ulong evmlr_highs_scalar(ulong x) {
-    long r0 = x % 259;
-    if (r0 > 129) r0 -= 259;
-    long r1 = (x - r0) / 259;
-    if (r1 == 12) r1 = 0;
-    return (r1 * 259) % 3109;
+    long r0 = x % ALPHA;
+    if (r0 > ALPHA_HALF) r0 -= ALPHA;
+    long r1 = (x - r0) / ALPHA;
+    if (r1 == ALPHA_CLASSES) r1 = 0;
+    return (r1 * ALPHA) % MOD_Q;
 }
 
 static ulong evmlr_lows_scalar(ulong x) {
-    return (x + 3109 - evmlr_highs_scalar(x)) % 3109;
+    return (x + MOD_Q - evmlr_highs_scalar(x)) % MOD_Q;
 }
 
 static int evmlr_make_hint_scalar(ulong z, ulong ct0) {
@@ -316,11 +323,11 @@ static int evmlr_make_hint_scalar(ulong z, ulong ct0) {
 
 static ulong evmlr_use_hint_scalar(int hint, ulong x) {
     if (hint == 0) return evmlr_highs_scalar(x);
-    long r0 = x % 259;
-    if (r0 > 129) r0 -= 259;
-    long r1 = (x - r0) / 259;
-    if (r0 > 0) return ((r1 + 1) % 12) * 259;
-    return ((r1 + 11) % 12) * 259; // r1 - 1 mod 12
+    long r0 = x % ALPHA;
+    if (r0 > ALPHA_HALF) r0 -= ALPHA;
+    long r1 = (x - r0) / ALPHA;
+    if (r0 > 0) return ((r1 + 1) % ALPHA_CLASSES) * ALPHA;
+    return ((r1 + ALPHA_CLASSES - 1) % ALPHA_CLASSES) * ALPHA; // r1 - 1 mod classes
 }
 
 void evmlr_utils_highs_mat(nmod_poly_mat_t out, const nmod_poly_mat_t in) {
