@@ -23,8 +23,13 @@
 
 /**
  * Number of times a test is executed.
+ *
+ * Overridable at compile time (-DTESTS=...) so that a build can trade coverage
+ * for speed, e.g. a smoke run that only needs each code path to execute once.
  */
+#ifndef TESTS
 #define TESTS 		100
+#endif
 
 /**
  * Runs a new benchmark once.

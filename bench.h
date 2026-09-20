@@ -9,8 +9,14 @@
 
 /**
  * Number of times each benchmark is ran.
+ *
+ * Overridable at compile time (-DBENCH=...). Note each benchmark runs
+ * BENCH * BENCH times, so -DBENCH=1 executes every benchmark exactly once,
+ * which is enough to exercise the code path without paying for timings.
  */
+#ifndef BENCH
 #define BENCH 	10
+#endif
 
 /**
  * Runs a new benchmark once.
