@@ -1,3 +1,4 @@
+#include "evmlr_crt.h"
 #include "evmlr_bin_proof.h"
 #include "evmlr_utils.h"
 #include "evmlr_challenge.h"
@@ -316,12 +317,12 @@ int evmlr_bin_prove(evmlr_bin_proof_t proof,
         nmod_poly_mat_mul(proof->w, A_1, y_m);
         for (slong i = 0; i < ctx->k; i++) {
             nmod_poly_struct* w_i = nmod_poly_mat_entry(proof->w, i, 0);
-            nmod_poly_mulmod(w_i, w_i, one, ctx->cyclo_poly);
+            evmlr_crt_mulmod(w_i, w_i, one, ctx->cyclo_poly);
         }
         nmod_poly_mat_mul(tmp_mat, A_2, y_r);
         for (slong i = 0; i < ctx->k; i++) {
             nmod_poly_struct* tmp_i = nmod_poly_mat_entry(tmp_mat, i, 0);
-            nmod_poly_mulmod(tmp_i, tmp_i, one, ctx->cyclo_poly);
+            evmlr_crt_mulmod(tmp_i, tmp_i, one, ctx->cyclo_poly);
         }
         nmod_poly_mat_add(proof->w, proof->w, tmp_mat);
 
@@ -331,12 +332,12 @@ int evmlr_bin_prove(evmlr_bin_proof_t proof,
         nmod_poly_mat_mul(proof->w_g, A_1, y_g_vec);
         for (slong i = 0; i < ctx->k; i++) {
             nmod_poly_struct* w_i = nmod_poly_mat_entry(proof->w_g, i, 0);
-            nmod_poly_mulmod(w_i, w_i, one, ctx->cyclo_poly);
+            evmlr_crt_mulmod(w_i, w_i, one, ctx->cyclo_poly);
         }
         nmod_poly_mat_mul(tmp_mat, A_2, y_rg);
         for (slong i = 0; i < ctx->k; i++) {
             nmod_poly_struct* tmp_i = nmod_poly_mat_entry(tmp_mat, i, 0);
-            nmod_poly_mulmod(tmp_i, tmp_i, one, ctx->cyclo_poly);
+            evmlr_crt_mulmod(tmp_i, tmp_i, one, ctx->cyclo_poly);
         }
         nmod_poly_mat_add(proof->w_g, proof->w_g, tmp_mat);
 
@@ -366,7 +367,7 @@ int evmlr_bin_prove(evmlr_bin_proof_t proof,
             // F_j(m) = \sigma_{-1}(m_j) * (m_j - \mathbf{1})
             poly_automorphism_minus1(sigma_m_j, m_j);
             nmod_poly_sub(m_j_minus1, m_j, poly_ones);
-            nmod_poly_mulmod(F_j, sigma_m_j, m_j_minus1, ctx->cyclo_poly);
+            evmlr_crt_mulmod(F_j, sigma_m_j, m_j_minus1, ctx->cyclo_poly);
 
             // h += mu_j * F_j
             nmod_poly_scalar_mul_nmod(F_j, F_j, mu[j]);
@@ -374,8 +375,8 @@ int evmlr_bin_prove(evmlr_bin_proof_t proof,
 
             // g_1 += mu_j * ( \sigma_{-1}(m_j) y_{m, j} + \sigma_{-1}(y_{m, j}) (m_j - 1) )
             poly_automorphism_minus1(sigma_y_j, y_m_j);
-            nmod_poly_mulmod(term1, sigma_m_j, y_m_j, ctx->cyclo_poly);
-            nmod_poly_mulmod(term2, sigma_y_j, m_j_minus1, ctx->cyclo_poly);
+            evmlr_crt_mulmod(term1, sigma_m_j, y_m_j, ctx->cyclo_poly);
+            evmlr_crt_mulmod(term2, sigma_y_j, m_j_minus1, ctx->cyclo_poly);
             nmod_poly_add(term3, term1, term2);
             nmod_poly_scalar_mul_nmod(term3, term3, mu[j]);
             nmod_poly_add(g_1, g_1, term3);
@@ -402,12 +403,12 @@ int evmlr_bin_prove(evmlr_bin_proof_t proof,
         nmod_poly_mat_mul(proof->w_g1, A_1, y_g1_vec);
         for (slong i = 0; i < ctx->k; i++) {
             nmod_poly_struct* w_i = nmod_poly_mat_entry(proof->w_g1, i, 0);
-            nmod_poly_mulmod(w_i, w_i, one, ctx->cyclo_poly);
+            evmlr_crt_mulmod(w_i, w_i, one, ctx->cyclo_poly);
         }
         nmod_poly_mat_mul(tmp_mat, A_2, y_rg1);
         for (slong i = 0; i < ctx->k; i++) {
             nmod_poly_struct* tmp_i = nmod_poly_mat_entry(tmp_mat, i, 0);
-            nmod_poly_mulmod(tmp_i, tmp_i, one, ctx->cyclo_poly);
+            evmlr_crt_mulmod(tmp_i, tmp_i, one, ctx->cyclo_poly);
         }
         nmod_poly_mat_add(proof->w_g1, proof->w_g1, tmp_mat);
 
@@ -416,7 +417,7 @@ int evmlr_bin_prove(evmlr_bin_proof_t proof,
         for (slong j = 0; j < ctx->L; j++) {
             nmod_poly_struct* y_m_j = nmod_poly_mat_entry(y_m, j, 0);
             poly_automorphism_minus1(sigma_y_j, y_m_j);
-            nmod_poly_mulmod(term1, sigma_y_j, y_m_j, ctx->cyclo_poly);
+            evmlr_crt_mulmod(term1, sigma_y_j, y_m_j, ctx->cyclo_poly);
             nmod_poly_scalar_mul_nmod(term1, term1, mu[j]);
             nmod_poly_add(proof->v, proof->v, term1);
         }
@@ -441,28 +442,28 @@ int evmlr_bin_prove(evmlr_bin_proof_t proof,
         // 7. Compute responses
         // z_m = c_chal * m + y_m
         for (slong i = 0; i < ctx->L; i++) {
-            nmod_poly_mulmod(cs_i, c_chal, nmod_poly_mat_entry(m, i, 0), ctx->cyclo_poly);
+            evmlr_crt_mulmod(cs_i, c_chal, nmod_poly_mat_entry(m, i, 0), ctx->cyclo_poly);
             nmod_poly_add(nmod_poly_mat_entry(proof->z_m, i, 0), nmod_poly_mat_entry(y_m, i, 0), cs_i);
         }
         // z_r = c_chal * r + y_r
         for (slong i = 0; i < ctx->m; i++) {
-            nmod_poly_mulmod(cs_i, c_chal, nmod_poly_mat_entry(r, i, 0), ctx->cyclo_poly);
+            evmlr_crt_mulmod(cs_i, c_chal, nmod_poly_mat_entry(r, i, 0), ctx->cyclo_poly);
             nmod_poly_add(nmod_poly_mat_entry(proof->z_r, i, 0), nmod_poly_mat_entry(y_r, i, 0), cs_i);
         }
         // z_g = c_chal * g + y_g
-        nmod_poly_mulmod(proof->z_g, c_chal, g, ctx->cyclo_poly);
+        evmlr_crt_mulmod(proof->z_g, c_chal, g, ctx->cyclo_poly);
         nmod_poly_add(proof->z_g, proof->z_g, y_g);
         // z_rg = c_chal * r_g + y_rg
         for (slong i = 0; i < ctx->m; i++) {
-            nmod_poly_mulmod(cs_i, c_chal, nmod_poly_mat_entry(r_g, i, 0), ctx->cyclo_poly);
+            evmlr_crt_mulmod(cs_i, c_chal, nmod_poly_mat_entry(r_g, i, 0), ctx->cyclo_poly);
             nmod_poly_add(nmod_poly_mat_entry(proof->z_rg, i, 0), nmod_poly_mat_entry(y_rg, i, 0), cs_i);
         }
         // z_g1 = c_chal * g_1 + y_g1
-        nmod_poly_mulmod(proof->z_g1, c_chal, g_1, ctx->cyclo_poly);
+        evmlr_crt_mulmod(proof->z_g1, c_chal, g_1, ctx->cyclo_poly);
         nmod_poly_add(proof->z_g1, proof->z_g1, y_g1);
         // z_rg1 = c_chal * r_g1 + y_rg1
         for (slong i = 0; i < ctx->m; i++) {
-            nmod_poly_mulmod(cs_i, c_chal, nmod_poly_mat_entry(r_g1, i, 0), ctx->cyclo_poly);
+            evmlr_crt_mulmod(cs_i, c_chal, nmod_poly_mat_entry(r_g1, i, 0), ctx->cyclo_poly);
             nmod_poly_add(nmod_poly_mat_entry(proof->z_rg1, i, 0), nmod_poly_mat_entry(y_rg1, i, 0), cs_i);
         }
 
@@ -470,16 +471,16 @@ int evmlr_bin_prove(evmlr_bin_proof_t proof,
         if (ctx->use_gaussian) {
             // Compute shift vectors
             for (slong i = 0; i < ctx->L; i++) {
-                nmod_poly_mulmod(nmod_poly_mat_entry(v_m, i, 0), c_chal, nmod_poly_mat_entry(m, i, 0), ctx->cyclo_poly);
+                evmlr_crt_mulmod(nmod_poly_mat_entry(v_m, i, 0), c_chal, nmod_poly_mat_entry(m, i, 0), ctx->cyclo_poly);
             }
             for (slong i = 0; i < ctx->m; i++) {
-                nmod_poly_mulmod(nmod_poly_mat_entry(v_r, i, 0), c_chal, nmod_poly_mat_entry(r, i, 0), ctx->cyclo_poly);
+                evmlr_crt_mulmod(nmod_poly_mat_entry(v_r, i, 0), c_chal, nmod_poly_mat_entry(r, i, 0), ctx->cyclo_poly);
             }
             for (slong i = 0; i < ctx->m; i++) {
-                nmod_poly_mulmod(nmod_poly_mat_entry(v_rg, i, 0), c_chal, nmod_poly_mat_entry(r_g, i, 0), ctx->cyclo_poly);
+                evmlr_crt_mulmod(nmod_poly_mat_entry(v_rg, i, 0), c_chal, nmod_poly_mat_entry(r_g, i, 0), ctx->cyclo_poly);
             }
             for (slong i = 0; i < ctx->m; i++) {
-                nmod_poly_mulmod(nmod_poly_mat_entry(v_rg1, i, 0), c_chal, nmod_poly_mat_entry(r_g1, i, 0), ctx->cyclo_poly);
+                evmlr_crt_mulmod(nmod_poly_mat_entry(v_rg1, i, 0), c_chal, nmod_poly_mat_entry(r_g1, i, 0), ctx->cyclo_poly);
             }
 
             success = 1;
@@ -665,7 +666,7 @@ int evmlr_bin_verify(const evmlr_bin_proof_t proof,
     nmod_poly_mat_add(lhs, lhs, tmp_mat);
 
     for (slong i = 0; i < ctx->k; i++) {
-        nmod_poly_mulmod(nmod_poly_mat_entry(ct, i, 0), c_chal, nmod_poly_mat_entry(c, i, 0), ctx->cyclo_poly);
+        evmlr_crt_mulmod(nmod_poly_mat_entry(ct, i, 0), c_chal, nmod_poly_mat_entry(c, i, 0), ctx->cyclo_poly);
     }
     nmod_poly_mat_sub(lhs, lhs, ct);
     int check1 = nmod_poly_mat_equal(lhs, proof->w);
@@ -687,7 +688,7 @@ int evmlr_bin_verify(const evmlr_bin_proof_t proof,
     nmod_poly_mat_add(lhs, lhs, tmp_mat);
 
     for (slong i = 0; i < ctx->k; i++) {
-        nmod_poly_mulmod(nmod_poly_mat_entry(ct, i, 0), c_chal, nmod_poly_mat_entry(proof->c_g->c, i, 0), ctx->cyclo_poly);
+        evmlr_crt_mulmod(nmod_poly_mat_entry(ct, i, 0), c_chal, nmod_poly_mat_entry(proof->c_g->c, i, 0), ctx->cyclo_poly);
     }
     nmod_poly_mat_sub(lhs, lhs, ct);
     int check2 = nmod_poly_mat_equal(lhs, proof->w_g);
@@ -703,7 +704,7 @@ int evmlr_bin_verify(const evmlr_bin_proof_t proof,
     nmod_poly_mat_add(lhs, lhs, tmp_mat);
 
     for (slong i = 0; i < ctx->k; i++) {
-        nmod_poly_mulmod(nmod_poly_mat_entry(ct, i, 0), c_chal, nmod_poly_mat_entry(proof->c_g1->c, i, 0), ctx->cyclo_poly);
+        evmlr_crt_mulmod(nmod_poly_mat_entry(ct, i, 0), c_chal, nmod_poly_mat_entry(proof->c_g1->c, i, 0), ctx->cyclo_poly);
     }
     nmod_poly_mat_sub(lhs, lhs, ct);
     int check3 = nmod_poly_mat_equal(lhs, proof->w_g1);
@@ -730,12 +731,12 @@ int evmlr_bin_verify(const evmlr_bin_proof_t proof,
         poly_automorphism_minus1(sigma_z_j, z_m_j);
         
         // quad = \sigma_{-1}(z_{m, j}) * z_{m, j}
-        nmod_poly_mulmod(term1, sigma_z_j, z_m_j, ctx->cyclo_poly);
+        evmlr_crt_mulmod(term1, sigma_z_j, z_m_j, ctx->cyclo_poly);
         nmod_poly_scalar_mul_nmod(term1, term1, mu[j]);
         nmod_poly_add(sum_quad, sum_quad, term1);
 
         // lin = \sigma_{-1}(z_{m, j}) * \mathbf{1}
-        nmod_poly_mulmod(term1, sigma_z_j, poly_ones, ctx->cyclo_poly);
+        evmlr_crt_mulmod(term1, sigma_z_j, poly_ones, ctx->cyclo_poly);
         nmod_poly_scalar_mul_nmod(term1, term1, mu[j]);
         nmod_poly_add(sum_lin, sum_lin, term1);
     }
@@ -744,17 +745,17 @@ int evmlr_bin_verify(const evmlr_bin_proof_t proof,
     nmod_poly_scalar_mul_nmod(lhs_poly, sum_quad, gamma_val);
     
     // + c_chal * z_g
-    nmod_poly_mulmod(term1, c_chal, proof->z_g, ctx->cyclo_poly);
+    evmlr_crt_mulmod(term1, c_chal, proof->z_g, ctx->cyclo_poly);
     nmod_poly_add(lhs_poly, lhs_poly, term1);
 
     // - gamma * c_chal * sum_lin
-    nmod_poly_mulmod(term1, c_chal, sum_lin, ctx->cyclo_poly);
+    evmlr_crt_mulmod(term1, c_chal, sum_lin, ctx->cyclo_poly);
     nmod_poly_scalar_mul_nmod(term1, term1, gamma_val);
     nmod_poly_sub(lhs_poly, lhs_poly, term1);
 
     // - c_chal^2 * h
-    nmod_poly_mulmod(term1, c_chal, c_chal, ctx->cyclo_poly);
-    nmod_poly_mulmod(term1, term1, proof->h, ctx->cyclo_poly);
+    evmlr_crt_mulmod(term1, c_chal, c_chal, ctx->cyclo_poly);
+    evmlr_crt_mulmod(term1, term1, proof->h, ctx->cyclo_poly);
     nmod_poly_sub(lhs_poly, lhs_poly, term1);
 
     // LHS - z_g1

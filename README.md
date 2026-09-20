@@ -2,7 +2,6 @@
 
 [![CI](https://github.com/dfaranha/evmlr-shuffle/actions/workflows/ci.yml/badge.svg)](https://github.com/dfaranha/evmlr-shuffle/actions/workflows/ci.yml)
 
-
 Implementation of the Proof of Shuffle and primitives of the paper "Efficient Verifiable Mixnets from Lattices,
 Revisited" by Jonathan Bootle, Vadim Lyubashevsky, and Antonio Merino-Gallardo (https://eprint.iacr.org/2025/658).
 
@@ -53,7 +52,6 @@ can be exercised directly:
 Test failures are reported through the exit status, so `make test` fails loudly
 and can be wired into CI.
 
-
 ### Continuous integration
 
 `.github/workflows/ci.yml` builds and runs the test suites on every push and
@@ -81,7 +79,10 @@ so editing it rebuilds everything that depends on it.
 
 ## TODO
 
-- [ ] Optimize the implementation for performance (consider using the chinese remainder theorem).
+- [ ] Optimize the implementation for performance. Multiplication in R_q now
+      uses the CRT decomposition (`evmlr_crt.c`); the remaining headroom is in
+      keeping operands in the split representation between operations instead
+      of converting per multiplication.
 - [ ] Fix the shift-exponent overflow in `gaussian.cpp` (the FACCT rejection
       check). When `exp(x)` is small enough that its biased exponent drops
       below 1003, `res_exponent` underflows and `1LL << res_exponent` shifts by

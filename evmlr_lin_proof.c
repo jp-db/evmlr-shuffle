@@ -1,3 +1,4 @@
+#include "evmlr_crt.h"
 #include "evmlr_lin_proof.h"
 #include "evmlr_utils.h"
 #include "evmlr_challenge.h"
@@ -248,7 +249,7 @@ int evmlr_lin_prove(evmlr_lin_proof_t proof,
         nmod_poly_mat_mul(proof->w, A, y_1);
         for (slong i = 0; i < ctx->k; i++) {
             nmod_poly_struct* w_i = nmod_poly_mat_entry(proof->w, i, 0);
-            nmod_poly_mulmod(w_i, w_i, one, ctx->cyclo_poly);
+            evmlr_crt_mulmod(w_i, w_i, one, ctx->cyclo_poly);
         }
         nmod_poly_mat_add(proof->w, proof->w, y_2);
  
@@ -268,7 +269,7 @@ int evmlr_lin_prove(evmlr_lin_proof_t proof,
 
         // Compute z_1 = y_1 + c s_1
         for (slong i = 0; i < ctx->m; i++) {
-            nmod_poly_mulmod(cs_i, c, nmod_poly_mat_entry(s_1, i, 0), ctx->cyclo_poly);
+            evmlr_crt_mulmod(cs_i, c, nmod_poly_mat_entry(s_1, i, 0), ctx->cyclo_poly);
             nmod_poly_add(nmod_poly_mat_entry(proof->z_1, i, 0), nmod_poly_mat_entry(y_1, i, 0), cs_i);
             if (is_gaussian) {
                 nmod_poly_set(nmod_poly_mat_entry(v_1, i, 0), cs_i);
@@ -277,7 +278,7 @@ int evmlr_lin_prove(evmlr_lin_proof_t proof,
  
         // Compute z_2 = y_2 + c s_2
         for (slong i = 0; i < ctx->k; i++) {
-            nmod_poly_mulmod(cs_i, c, nmod_poly_mat_entry(s_2, i, 0), ctx->cyclo_poly);
+            evmlr_crt_mulmod(cs_i, c, nmod_poly_mat_entry(s_2, i, 0), ctx->cyclo_poly);
             nmod_poly_add(nmod_poly_mat_entry(proof->z_2, i, 0), nmod_poly_mat_entry(y_2, i, 0), cs_i);
             if (is_gaussian) {
                 nmod_poly_set(nmod_poly_mat_entry(v_2, i, 0), cs_i);
@@ -339,7 +340,7 @@ int evmlr_lin_verify(const evmlr_lin_proof_t proof,
  
     // Compute c t
     for (slong i = 0; i < ctx->k; i++) {
-        nmod_poly_mulmod(nmod_poly_mat_entry(ct, i, 0), c, nmod_poly_mat_entry(t, i, 0), ctx->cyclo_poly);
+        evmlr_crt_mulmod(nmod_poly_mat_entry(ct, i, 0), c, nmod_poly_mat_entry(t, i, 0), ctx->cyclo_poly);
     }
  
     // lhs = lhs - c t
