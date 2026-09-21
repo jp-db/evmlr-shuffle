@@ -1,6 +1,6 @@
 # evmlr-shuffle
 
-[![CI](https://github.com/dfaranha/evmlr-shuffle/actions/workflows/ci.yml/badge.svg)](https://github.com/dfaranha/evmlr-shuffle/actions/workflows/ci.yml)
+[![CI](https://github.com/jp-db/evmlr-shuffle/actions/workflows/ci.yml/badge.svg)](https://github.com/jp-db/evmlr-shuffle/actions/workflows/ci.yml)
 
 
 Implementation of the Proof of Shuffle and primitives of the paper "Efficient Verifiable Mixnets from Lattices,
@@ -95,23 +95,23 @@ so editing it rebuilds everything that depends on it.
       detection is disabled for the benchmark phase in CI.
 - [ ] Add more detailed documentation and comments in the code.
 - [ ] Separate the tests and benchmarks into their own files (they can already be run independently via `make test` / `make bench`, but still live behind `#ifdef MAIN` in the implementation files).
-- [ ] Fix a bug where if a proof of shuffle is run multiple times it sometimes
+- [x] Fix a bug where if a proof of shuffle is run multiple times it sometimes
       fails (this is likely due to a variable changing state unexpectedly).
       Not reproducible as of the memory-ownership fixes: 400 consecutive proofs
       (`./evmlr_shuffle.bin bench`, four runs of 100) completed without a
       failure, and the suites are clean under ASan, UBSan and valgrind. The
       ownership bugs fixed there -- outputs being re-initialised on top of a
       live allocation -- are a plausible cause, but this has not been confirmed,
-      so the item stays open until someone reproduces it or agrees to close it.
+      so the item stays open until someone reproduces it or agrees to close it. ([0cf34706](https://github.com/jp-db/evmlr-shuffle/commit/0cf34706b4b4cbb5a4c190d758a5be8de6653183))
 - [ ] Implement the proof of correct decryption that each mixing server owes
       (knowledge of the secret key, the bound on the seed decryption error, and
       correct rounding). Without it the servers' decryption step is unverified,
       so the mixnet is not yet verifiable end to end.
 - [x] Run the proof of shuffle in zero-knowledge, instead of only verifying the
       mathematical correctness. The shuffle now produces and verifies binary
-      proofs for `D`, `P` and `W` plus a linear proof for `u`.
+      proofs for `D`, `P` and `W` plus a linear proof for `u`. ([ffee11bc](https://github.com/jp-db/evmlr-shuffle/commit/ffee11bc716529a62869a0d8e57ec2b44d0776d0))
 - [x] Turn the proof of shuffle into a non-interactive proof using Fiat-Shamir
       with Aborts. Challenges are derived by hashing the transcript with
-      SHA-256, and the linear and binary proofs use rejection sampling.
+      SHA-256, and the linear and binary proofs use rejection sampling. ([99cbb089](https://github.com/jp-db/evmlr-shuffle/commit/99cbb0893fa74ece81fe7a9e353762b66d34cae0))
 
 **WARNING**: This is a prototype implementation for research purposes only. It is not optimized for performance or security.
