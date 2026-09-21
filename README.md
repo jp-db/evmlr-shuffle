@@ -1,5 +1,7 @@
 # evmlr-shuffle
 
+[![CI](https://github.com/dfaranha/evmlr-shuffle/actions/workflows/ci.yml/badge.svg)](https://github.com/dfaranha/evmlr-shuffle/actions/workflows/ci.yml)
+
 
 Implementation of the Proof of Shuffle and primitives of the paper "Efficient Verifiable Mixnets from Lattices,
 Revisited" by Jonathan Bootle, Vadim Lyubashevsky, and Antonio Merino-Gallardo (https://eprint.iacr.org/2025/658).
@@ -52,9 +54,45 @@ Test failures are reported through the exit status, so `make test` fails loudly
 and can be wired into CI.
 
 
+### Continuous integration
+
+`.github/workflows/ci.yml` builds and runs the test suites on every push and
+pull request, in two configurations: the usual `-march=native` build and a
+portable one (`ARCH=`) that checks the code still compiles without it.
+
+The workflow pins `ubuntu-26.04` rather than `ubuntu-latest`, because this code
+needs the FLINT >= 3.2 random-state API (`flint_rand_init`) and Ubuntu 24.04 —
+which `ubuntu-latest` still resolves to — only packages FLINT 3.0.1.
+
+Benchmarks are not run in CI; shared runners make the timings meaningless. To
+treat compiler warnings as errors, add `EXTRA_CFLAGS=-Werror` to the build step.
+
+Build flags can be overridden without editing the Makefile:
+
+```sh
+make ARCH=                      # portable build, without -march=native
+make OPT=-O0                    # unoptimised, for debugging
+make EXTRA_CFLAGS=-fsanitize=address
+```
+
+To tweak the parameters of the schemes, mainly the number of messages, you can
+modify `evmlr_params.h` in the root directory. Header dependencies are tracked,
+so editing it rebuilds everything that depends on it.
+
 ## TODO
 
 - [ ] Optimize the implementation for performance (consider using the chinese remainder theorem).
+- [ ] Fix the shift-exponent overflow in `gaussian.cpp` (the FACCT rejection
+      check). When `exp(x)` is small enough that its biased exponent drops
+      below 1003, `res_exponent` underflows and `1LL << res_exponent` shifts by
+      2^64-1, which is undefined. UBSan reports it from the voting benchmark.
+      Since a wrong rejection decision biases the sampler, this is worth
+      treating as correctness-relevant rather than cosmetic. The sanitizer CI
+      job reports but does not fail on it until this is resolved.
+- [ ] Free the keypairs allocated inside the benchmark timing loops (`bench()`
+      in `evmlr_mlpke.c` and `evmlr_hpke.c` regenerate a keypair per iteration
+      without clearing the previous one). Harness-only, but it is why leak
+      detection is disabled for the benchmark phase in CI.
 - [ ] Add more detailed documentation and comments in the code.
 - [ ] Separate the tests and benchmarks into their own files (they can already be run independently via `make test` / `make bench`, but still live behind `#ifdef MAIN` in the implementation files).
 - [ ] Fix a bug where if a proof of shuffle is run multiple times it sometimes

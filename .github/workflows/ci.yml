@@ -1,0 +1,90 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+# Cancel superseded runs on the same branch/PR.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: build & test (${{ matrix.name }})
+    # ubuntu-latest (24.04) only packages FLINT 3.0.1; we need >= 3.2.
+    runs-on: ubuntu-26.04
+    timeout-minutes: 20
+
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: native
+            arch: -march=native -mtune=native
+          # Guards the per-file ISA flags in the Makefile.
+          - name: portable
+            arch: ""
+
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libflint-dev libgmp-dev
+
+      - name: Show toolchain versions
+        run: |
+          gcc --version | head -1
+          g++ --version | head -1
+          echo "FLINT $(pkg-config --modversion flint)"
+
+      - name: Build
+        run: make -j"$(nproc)" ARCH="${{ matrix.arch }}" build
+
+      # Repeated: this project's failures are probabilistic and pass a single run.
+      - name: Test
+        run: |
+          for i in 1 2 3; do
+            echo "--- test pass $i ---"
+            make ARCH="${{ matrix.arch }}" test || exit 1
+          done
+
+  sanitizers:
+    name: sanitizers (asan + ubsan)
+    runs-on: ubuntu-26.04
+    timeout-minutes: 30
+
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libflint-dev libgmp-dev
+
+      # BENCH=1 runs each benchmark once, enough to execute the code.
+      - name: Build with AddressSanitizer and UndefinedBehaviorSanitizer
+        run: |
+          make -j"$(nproc)" \
+            EXTRA_CFLAGS="-fsanitize=address,undefined -fno-omit-frame-pointer -g -DBENCH=1" \
+            build
+
+      # Everything is clean here, so any report is a regression.
+      - name: Run test suites under sanitizers
+        env:
+          ASAN_OPTIONS: detect_leaks=1
+          UBSAN_OPTIONS: print_stacktrace=1:halt_on_error=1
+        run: make test
+
+      # `make test` never enters the benchmark code. Leaks are off (the harness
+      # allocates per iteration by design); UBSan does not halt until the known
+      # gaussian.cpp shift is fixed. Memory-safety checks stay on.
+      - name: Run benchmark suites under sanitizers
+        env:
+          ASAN_OPTIONS: detect_leaks=0
+          UBSAN_OPTIONS: print_stacktrace=1
+        run: make bench
