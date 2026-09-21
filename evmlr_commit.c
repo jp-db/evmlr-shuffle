@@ -109,6 +109,7 @@ int evmlr_commit_verify(const evmlr_commit_t com, const nmod_poly_mat_t msg, con
 }
 
 #ifdef MAIN
+#include "evmlr_main.h"
 
 void test(evmlr_commit_ctx_t ctx) {
     ulong msg_value[ctx->N];
@@ -164,21 +165,20 @@ void bench(evmlr_commit_ctx_t ctx) {
     evmlr_commit_clear(com);
 }
 
-int main() {
+int main(int argc, char *argv[]) {
+    evmlr_mode_t mode = evmlr_mode(argc, argv);
+
     flint_rand_t state;
-    flint_rand_init(state);
-    ulong seed[2];
-    getrandom(seed, sizeof(ulong)*2, 0);
-    flint_rand_set_seed(state, seed[0], seed[1]);
+    evmlr_rand_init(state);
 
     evmlr_commit_ctx_t ctx;
     evmlr_commit_ctx_init(ctx, M_LEN, state);
 
-    test(ctx);
-    bench(ctx);
+    if (evmlr_runs_tests(mode))   test(ctx);
+    if (evmlr_runs_benches(mode)) bench(ctx);
 
     evmlr_commit_ctx_clear(ctx);
     flint_rand_clear(state);
-    return 0;
+    return test_status();
 }
 #endif

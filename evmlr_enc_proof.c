@@ -225,6 +225,7 @@ int evmlr_enc_proof_verify(const evmlr_enc_proof_t proof,
 }
 
 #ifdef MAIN
+#include "evmlr_main.h"
 
 #include "test.h"
 #include "bench.h"
@@ -493,19 +494,20 @@ void bench_layered_enc_proof(flint_rand_t state) {
     printf("=======================================================================\n\n");
 }
 
-int main() {
-    flint_rand_t state;
-    flint_rand_init(state);
-    ulong seed[2];
-    getrandom(seed, sizeof(ulong)*2, 0);
-    flint_rand_set_seed(state, seed[0], seed[1]);
+int main(int argc, char *argv[]) {
+    evmlr_mode_t mode = evmlr_mode(argc, argv);
 
-    test_enc_proof(state);
-    bench_enc_proof(state);
-    bench_layered_enc_proof(state);
+    flint_rand_t state;
+    evmlr_rand_init(state);
+
+    if (evmlr_runs_tests(mode)) test_enc_proof(state);
+    if (evmlr_runs_benches(mode)) {
+        bench_enc_proof(state);
+        bench_layered_enc_proof(state);
+    }
 
     flint_rand_clear(state);
-    return 0;
+    return test_status();
 }
 
 #endif

@@ -81,4 +81,11 @@ void test_fail(void);
  */
 void test_pass(void);
 
+/**
+ * Returns the exit status a test binary should report.
+ *
+ * @return 0 if every test executed so far passed, 1 if any of them failed.
+ */
+int test_status(void);
+
 #endif /* !RLC_TEST_H */
