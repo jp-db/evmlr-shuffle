@@ -163,7 +163,19 @@ int evmlr_lin_prove(evmlr_lin_proof_t proof,
         }
 
         evmlr_utils_make_hint_mat(proof->z_2, Az_minus_ct1, ct_0);
-        
+
+        // The one-bit hint only corrects a single step, which needs
+        // |c*t_0| <= ALPHA/2; an odd ALPHA breaks that bound (see
+        // evmlr_params.h). Check it reproduces w, and resample if not.
+        nmod_poly_mat_t w_check;
+        nmod_poly_mat_init(w_check, ctx->k, 1, MOD_Q);
+        evmlr_utils_use_hint_mat(w_check, proof->z_2, Az_minus_ct1);
+        int hint_ok = nmod_poly_mat_equal(w_check, proof->w);
+        nmod_poly_mat_clear(w_check);
+        if (!hint_ok) {
+            continue;
+        }
+
         success = 1;
     }
 

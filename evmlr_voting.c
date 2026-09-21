@@ -61,6 +61,7 @@ static void voting_encrypt_and_prove_layer(evmlr_voting_layer_t ct, evmlr_enc_pr
     nmod_poly_t e3_polys[K_LWR];
 
     evmlr_hpke_cipher_t cipher;
+    evmlr_hpke_cipher_init(cipher, pp->hpke_ctx->otse_ctx->L);
     for (int i = 0; i < K_LWR; i++) {
         nmod_poly_mat_init(r_mats[i], 1, K_LWE, MOD_Q);
         nmod_poly_mat_init(e2_mats[i], 1, K_LWE, MOD_Q);
@@ -316,6 +317,8 @@ slong evmlr_voting_counting(nmod_poly_mat_t* results, evmlr_shuffle_proof_t* shu
 
         // Decrypt and Verify
         for (slong i = 0; i < N; i++) {
+            // d_dagger is owned by the caller; decryption only fills it in.
+            nmod_poly_mat_init(d_dagger[i], 2 * ETA * (K_LWE + pp->hpke_ctx->otse_ctx->L), 1, MOD_Q);
             voting_decrypt_layer(decrypted_msgs[i], d_dagger[i], a_mats[i], &curr_cts[i], sk->sks[j], pp);
             int ok = evmlr_voting_verify_enc(pp, curr_proofs[i], &curr_cts[i], decrypted_msgs[i], j);
             if (!ok) {
@@ -357,7 +360,7 @@ slong evmlr_voting_counting(nmod_poly_mat_t* results, evmlr_shuffle_proof_t* shu
 
         shuf_sp->pi = pi;
         shuf_sp->d_dagger = d_dagger;
-        nmod_poly_mat_init(shuf_sp->r_D, 2*K_SIS, 1, MOD_Q);
+        nmod_poly_mat_init(shuf_sp->r_D, 2 * K_SIS, 1, MOD_Q);
         evmlr_commit_sample_r(shuf_sp->r_D);
 
         nmod_poly_mat_t d_flat;
@@ -371,6 +374,7 @@ slong evmlr_voting_counting(nmod_poly_mat_t* results, evmlr_shuffle_proof_t* shu
                 nmod_poly_set(poly, d_dag_ir);
             }
         }
+        evmlr_commit_init(shuf_pp->D);
         evmlr_commit(shuf_pp->D, d_flat, shuf_sp->r_D, pp->shuf_ctx->com_ctx);
         nmod_poly_mat_clear(d_flat);
 
@@ -699,6 +703,8 @@ void bench_voting_protocol(flint_rand_t state) {
         // Decrypt and Verify Encryption Proofs
         uint64_t start_dec_verify = cpucycles();
         for (slong i = 0; i < N; i++) {
+            // d_dagger is owned by the caller; decryption only fills it in.
+            nmod_poly_mat_init(d_dagger[i], 2 * ETA * (K_LWE + pp->hpke_ctx->otse_ctx->L), 1, MOD_Q);
             voting_decrypt_layer(decrypted_msgs[i], d_dagger[i], a_mats[i], &curr_cts[i], sk->sks[j], pp);
             int ok = evmlr_voting_verify_enc(pp, curr_proofs[i], &curr_cts[i], decrypted_msgs[i], j);
             if (!ok) {
@@ -743,7 +749,7 @@ void bench_voting_protocol(flint_rand_t state) {
 
         shuf_sp->pi = pi;
         shuf_sp->d_dagger = d_dagger;
-        nmod_poly_mat_init(shuf_sp->r_D, 2*K_SIS, 1, MOD_Q);
+        nmod_poly_mat_init(shuf_sp->r_D, 2 * K_SIS, 1, MOD_Q);
         evmlr_commit_sample_r(shuf_sp->r_D);
 
         nmod_poly_mat_t d_flat;
@@ -757,6 +763,7 @@ void bench_voting_protocol(flint_rand_t state) {
                 nmod_poly_set(poly, d_dag_ir);
             }
         }
+        evmlr_commit_init(shuf_pp->D);
         evmlr_commit(shuf_pp->D, d_flat, shuf_sp->r_D, pp->shuf_ctx->com_ctx);
         nmod_poly_mat_clear(d_flat);
 

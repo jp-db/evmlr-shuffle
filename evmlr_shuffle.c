@@ -184,6 +184,7 @@ static void setup_A_t_u(nmod_poly_mat_t A_u, nmod_poly_mat_t t_u, const nmod_pol
     }
 
     nmod_poly_mat_t G;
+    nmod_poly_mat_init(G, 1, Cw, MOD_Q);
     evmlr_utils_gadget_matrix(G, 1, Cw, MOD_Q);
 
     for (int i = 0; i < N; i++) {
@@ -303,8 +304,10 @@ static int verify_u(const evmlr_lin_proof_t lin_proof, const nmod_poly_mat_t u, 
 }
 
 void evmlr_shuffle_phase_1(nmod_poly_mat_t sigma, evmlr_commit_t com, nmod_poly_mat_t r, const evmlr_shuffle_ctx_t ctx, const evmlr_shuffle_sp_t sp) {
-    // Sample r from B^{2K_SIS}
+    // Sample r from B^{2K_SIS} (r and com are owned by the caller)
+    nmod_poly_mat_init(r, 2 * K_SIS, 1, MOD_Q);
     evmlr_commit_sample_r(r);
+    evmlr_commit_init(com);
     nmod_poly_mat_init(sigma, ctx->com_ctx->N, 1, MOD_Q);
     nmod_poly_mat_zero(sigma);
     for (slong i = 0; i < ctx->N; i++) {
@@ -373,6 +376,7 @@ void evmlr_shuffle_phase_2(nmod_poly_mat_t h, nmod_poly_mat_t h_hat, evmlr_shuff
     nmod_poly_mat_init(tmp_mat, 1, 1, MOD_Q);
     for (int i = 0; i < N; i++) {
         nmod_poly_set(nmod_poly_vec_entry(tmp_mat, 0), nmod_poly_vec_entry(w, i));
+        nmod_poly_mat_init(w_dagger[i], LOG_Q_CEIL, nmod_poly_mat_nrows(tmp_mat), 2);
         evmlr_utils_ring_to_bin(w_dagger[i], tmp_mat, LOG_Q_CEIL);
     }
     nmod_poly_mat_clear(tmp_mat);
@@ -387,7 +391,9 @@ void evmlr_shuffle_phase_2(nmod_poly_mat_t h, nmod_poly_mat_t h_hat, evmlr_shuff
         }
     }
 
+    nmod_poly_mat_init(r_W, 2 * K_SIS, 1, MOD_Q);
     evmlr_commit_sample_r(r_W);
+    evmlr_commit_init(proof->W);
     evmlr_commit(proof->W, w_flat, r_W, ctx->com_ctx);
 
     // cleanup
@@ -649,6 +655,9 @@ void setup(evmlr_shuffle_sp_t sp, evmlr_shuffle_pp_t pp, const evmlr_shuffle_ctx
     sp->d_dagger = (nmod_poly_mat_t *) malloc(N * sizeof(nmod_poly_mat_t));
     for (slong i = 0; i < N; i++) {
         evmlr_hpke_cipher_t cipher;
+        evmlr_hpke_cipher_init(cipher, ctx->hpke_ctx->otse_ctx->L);
+        // d_dagger is owned by the caller; HPKE encryption only fills it in.
+        nmod_poly_mat_init(sp->d_dagger[i], (2*ETA) * (K_LWE + L), 1, MOD_Q);
         nmod_poly_mat_struct* d_dagger_i = sp->d_dagger[i];
         evmlr_hpke_encrypt(cipher, d_dagger_i, m[i], keypair->enc_keypair->pk, ctx->hpke_ctx, state);
         nmod_poly_mat_init(pp->c_star[i]->c, L, 1, MOD_Q);
@@ -656,6 +665,7 @@ void setup(evmlr_shuffle_sp_t sp, evmlr_shuffle_pp_t pp, const evmlr_shuffle_ctx
         evmlr_hpke_cipher_clear(cipher);
     }
 
+    nmod_poly_mat_init(sp->r_D, 2 * K_SIS, 1, MOD_Q);
     evmlr_commit_sample_r(sp->r_D);
 
     nmod_poly_mat_t d_flat;
@@ -669,6 +679,7 @@ void setup(evmlr_shuffle_sp_t sp, evmlr_shuffle_pp_t pp, const evmlr_shuffle_ctx
             nmod_poly_set(poly, d_dag_ij);
         }
     }
+    evmlr_commit_init(pp->D);
     evmlr_commit(pp->D, d_flat, sp->r_D, ctx->com_ctx);
 
     nmod_poly_mat_clear(d_flat);

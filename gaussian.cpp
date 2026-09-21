@@ -149,7 +149,7 @@ static inline int64_t comp(const unsigned char *r, const uint64_t res)
 	res_mantissa = (res & EXP_MANTISSA_MASK) | (1LL << EXP_MANTISSA_PRECISION);
 	res_exponent = R_EXPONENT_L - 1023 + 1 + (res >> EXP_MANTISSA_PRECISION);
 
-	r1 = *((uint64_t *)r);
+	memcpy(&r1, r, sizeof(r1)); /* r is not guaranteed to be 8-byte aligned */
 	r2 = (uint64_t)(r[8]);
 
 	r_mantissa = r1 & R_MANTISSA_MASK;

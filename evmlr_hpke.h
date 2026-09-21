@@ -29,6 +29,10 @@ void evmlr_hpke_keypair_gen(evmlr_hpke_keypair_t keypair, flint_rand_t state, co
 
 void evmlr_hpke_keypair_clear(evmlr_hpke_keypair_t keypair);
 
+// Initialises a hybrid ciphertext whose symmetric part has length L. The caller
+// owns it and must clear it with evmlr_hpke_cipher_clear.
+void evmlr_hpke_cipher_init(evmlr_hpke_cipher_t cipher, slong L);
+
 void evmlr_hpke_encrypt(evmlr_hpke_cipher_t cipher, nmod_poly_mat_t d_dagger, const nmod_poly_mat_t msg,
                         const evmlr_mlpke_pk_t pk, const evmlr_hpke_ctx_t ctx, flint_rand_t state);
 

@@ -47,19 +47,22 @@ void evmlr_mlpke_keypair_clear(evmlr_mlpke_keypair_t keypair) {
     nmod_poly_mat_clear(keypair->pk->t);
 }
 
+void evmlr_mlpke_cipher_init(evmlr_mlpke_cipher_t cipher) {
+    nmod_poly_mat_init(cipher->uT, 1, K_LWE, MOD_Q);
+    nmod_poly_init(cipher->v, MOD_Q);
+}
+
 void evmlr_mlpke_enc_with_secrets(evmlr_mlpke_cipher_t cipher, nmod_poly_mat_t r, nmod_poly_mat_t e2, nmod_poly_t e3, const nmod_poly_t msg, const evmlr_mlpke_pk_t pk, const evmlr_mlpke_ctx_t ctx) {
     nmod_poly_mat_t tmp;
     nmod_poly_mat_init(tmp, 1, 1, MOD_Q);
 
-    // Compute u^T = r^T A + e_2^T
-    nmod_poly_mat_init(cipher->uT, 1, K_LWE, MOD_Q);
+    // Compute u^T = r^T A + e_2^T (cipher is owned by the caller)
     nmod_poly_mat_mulmod(cipher->uT, r, pk->A, ctx->cyclo_poly);
     nmod_poly_mat_add(cipher->uT, cipher->uT, e2);
 
     // c = q/2 getting the closest integer with ties rounded up
     ulong c = (MOD_Q + 1) / 2;
     // Compute v = r^T t + e_3 + c * msg
-    nmod_poly_init(cipher->v, MOD_Q);
 
     nmod_poly_mat_mulmod(tmp, r, pk->t, ctx->cyclo_poly); // r^T t
     nmod_poly_struct* poly = nmod_poly_mat_entry(tmp, 0, 0);
@@ -106,8 +109,7 @@ void evmlr_mlpke_dec(nmod_poly_t msg, const evmlr_mlpke_cipher_t cipher, const e
 
     nmod_poly_sub(m_tilde, m_tilde, poly);
 
-    nmod_poly_init(msg, MOD_Q);
-    nmod_poly_zero(msg);
+    nmod_poly_zero(msg); // msg is owned by the caller
     // msg = 0 if \tilde{m} is closer to 0 than to q/2, and 1 otherwise
     ulong threshold = (MOD_Q) / 4;
     for (slong i = 0; i < DEGREE_N; i++) {
@@ -133,6 +135,7 @@ void evmlr_mlpke_cipher_clear(evmlr_mlpke_cipher_t cipher) {
 static void test(flint_rand_t rand, evmlr_mlpke_ctx_t ctx) {
     evmlr_mlpke_keypair_t keypair;
     evmlr_mlpke_cipher_t cipher;
+    evmlr_mlpke_cipher_init(cipher);
     evmlr_mlpke_keypair_gen(keypair, rand, ctx);
 
     nmod_poly_t msg, decrypted_msg;
@@ -166,6 +169,7 @@ static void bench(flint_rand_t rand, evmlr_mlpke_ctx_t ctx) {
     nmod_poly_init(decrypted_msg, MOD_Q);
 
     evmlr_mlpke_cipher_t cipher;
+    evmlr_mlpke_cipher_init(cipher);
 
     BENCH_BEGIN("evmlr_mlpke_keypair_gen") {
         BENCH_ADD(evmlr_mlpke_keypair_gen(keypair, rand, ctx))

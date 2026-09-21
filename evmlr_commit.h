@@ -23,7 +23,12 @@ void evmlr_commit_ctx_init(evmlr_commit_ctx_t ctx, slong N, flint_rand_t state);
 
 void evmlr_commit_ctx_clear(evmlr_commit_ctx_t ctx);
 
+// Initialises a commitment. The caller owns it and must clear it with
+// evmlr_commit_clear; evmlr_commit only fills it in.
+void evmlr_commit_init(evmlr_commit_t com);
+
 // sample from binom r \sample B^{2K_SIS}_eta
+// r must already be initialised by the caller as a 2*K_SIS x 1 matrix.
 void evmlr_commit_sample_r(nmod_poly_mat_t r);
 
 // c = A_1 * msg + A_2 * r

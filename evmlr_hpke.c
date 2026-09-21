@@ -22,6 +22,13 @@ void evmlr_hpke_keypair_clear(evmlr_hpke_keypair_t keypair) {
     evmlr_mlpke_keypair_clear(keypair->enc_keypair);
 }
 
+void evmlr_hpke_cipher_init(evmlr_hpke_cipher_t cipher, slong L) {
+    for (int i = 0; i < K_LWR; i++) {
+        evmlr_mlpke_cipher_init(cipher->enc_cipher[i]);
+    }
+    evmlr_otse_ciphertext_init(cipher->otse_cipher, L);
+}
+
 void evmlr_hpke_encrypt(evmlr_hpke_cipher_t cipher, nmod_poly_mat_t d_dagger, const nmod_poly_mat_t msg,
                         const evmlr_mlpke_pk_t pk, const evmlr_hpke_ctx_t ctx, flint_rand_t state) {
     evmlr_otse_key_t key;
@@ -67,6 +74,7 @@ static void test(flint_rand_t rand, evmlr_hpke_ctx_t ctx) {
     nmod_poly_mat_randtest(msg, rand, DEGREE_N);
 
     evmlr_hpke_cipher_t cipher;
+    evmlr_hpke_cipher_init(cipher, ctx->otse_ctx->L);
     TEST_BEGIN("encryption and decryption are consistent") {
         evmlr_hpke_encrypt(cipher, NULL, msg, keypair->enc_keypair->pk, ctx, rand);
         evmlr_hpke_decrypt(decrypted_msg, cipher, keypair->enc_keypair->sk, ctx);
@@ -91,6 +99,7 @@ static void bench(flint_rand_t rand, evmlr_hpke_ctx_t ctx) {
     nmod_poly_mat_randtest(msg, rand, DEGREE_N);
 
     evmlr_hpke_cipher_t cipher;
+    evmlr_hpke_cipher_init(cipher, ctx->otse_ctx->L);
 
     BENCH_BEGIN("evmlr_hpke_keypair_gen") {
         BENCH_ADD(evmlr_hpke_keypair_gen(keypair, rand, ctx))

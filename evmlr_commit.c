@@ -30,16 +30,19 @@ void evmlr_commit_ctx_init(evmlr_commit_ctx_t ctx, slong N, flint_rand_t state) 
 void evmlr_commit_ctx_clear(evmlr_commit_ctx_t ctx) {
     nmod_poly_mat_clear(ctx->A_1);
     nmod_poly_mat_clear(ctx->A_2);
+    nmod_poly_clear(ctx->cyclo_poly);
+}
+
+void evmlr_commit_init(evmlr_commit_t com) {
+    nmod_poly_mat_init(com->c, K_SIS, 1, MOD_Q);
 }
 
 void evmlr_commit_sample_r(nmod_poly_mat_t r) {
-    nmod_poly_mat_init(r, 2 * K_SIS, 1, MOD_Q);
-    evmlr_utils_binom_sample_mat_ring(r, ETA);
+    evmlr_utils_binom_sample_mat_ring(r, ETA); // r is owned by the caller
 }
 
 void evmlr_commit(evmlr_commit_t com, const nmod_poly_mat_t msg, const nmod_poly_mat_t r, const evmlr_commit_ctx_t ctx) {
-    // Initialize commitment polynomials
-    nmod_poly_mat_init(com->c, K_SIS, 1, MOD_Q);
+    // com is owned by the caller; this only fills it in.
 
     nmod_poly_mat_t tmp;
     nmod_poly_mat_init(tmp, K_SIS, 1, MOD_Q);
@@ -101,6 +104,7 @@ int evmlr_commit_verify(const evmlr_commit_t com, const nmod_poly_mat_t msg, con
     }
     // c = A_1 * msg + A_2 * r
     evmlr_commit_t recomputed_com;
+    evmlr_commit_init(recomputed_com);
     evmlr_commit(recomputed_com, msg, r, ctx);
     valid = nmod_poly_mat_equal(com->c, recomputed_com->c);
 
@@ -122,9 +126,10 @@ void test(evmlr_commit_ctx_t ctx) {
         evmlr_utils_int_to_bin(nmod_poly_mat_entry(msg, i, 0), msg_value[i]);
     }
     // Sample r
+    nmod_poly_mat_init(r, 2 * K_SIS, 1, MOD_Q);
     evmlr_commit_sample_r(r);
 
-
+    evmlr_commit_init(com);
     TEST_BEGIN("commitments can be created and verified") {
         evmlr_commit(com, msg, r, ctx);
         int valid = evmlr_commit_verify(com, msg, r, ctx);
@@ -148,11 +153,12 @@ void bench(evmlr_commit_ctx_t ctx) {
         evmlr_utils_int_to_bin(nmod_poly_mat_entry(msg, i, 0), msg_value[i]);
     }
     // Sample r
+    nmod_poly_mat_init(r, 2 * K_SIS, 1, MOD_Q);
     evmlr_commit_sample_r(r);
 
+    evmlr_commit_init(com);
     BENCH_BEGIN("evmlr_commit") {
         BENCH_ADD(evmlr_commit(com, msg, r, ctx))
-        evmlr_commit_clear(com);
     } BENCH_END;
 
     BENCH_BEGIN("evmlr_commit_verify") {
