@@ -1,3 +1,4 @@
+#include "evmlr_crt.h"
 #include "evmlr_commit.h"
 #include "evmlr_utils.h"
 #ifdef MAIN
@@ -54,13 +55,13 @@ void evmlr_commit(evmlr_commit_t com, const nmod_poly_mat_t msg, const nmod_poly
     nmod_poly_mat_mul(com->c, ctx->A_1, msg);
     for (slong i = 0; i < K_SIS; i++) {
         nmod_poly_struct* c_i = nmod_poly_mat_entry(com->c, i, 0);
-        nmod_poly_mulmod(c_i, c_i, one, ctx->cyclo_poly);
+        evmlr_crt_mulmod(c_i, c_i, one, ctx->cyclo_poly);
     }
 
     nmod_poly_mat_mul(tmp, ctx->A_2, r);
     for (slong i = 0; i < K_SIS; i++) {
         nmod_poly_struct* tmp_i = nmod_poly_mat_entry(tmp, i, 0);
-        nmod_poly_mulmod(tmp_i, tmp_i, one, ctx->cyclo_poly);
+        evmlr_crt_mulmod(tmp_i, tmp_i, one, ctx->cyclo_poly);
     }
 
     nmod_poly_mat_add(com->c, com->c, tmp);

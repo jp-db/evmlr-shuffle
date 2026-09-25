@@ -1,3 +1,4 @@
+#include "evmlr_crt.h"
 #include "evmlr_lin_proof.h"
 #include "evmlr_utils.h"
 #include "evmlr_challenge.h"
@@ -103,7 +104,7 @@ int evmlr_lin_prove(evmlr_lin_proof_t proof,
         // w = HIGHS(A y)
         nmod_poly_mat_mul(Ay, A, y);
         for (slong i = 0; i < ctx->k; i++) {
-            nmod_poly_mulmod(nmod_poly_mat_entry(Ay, i, 0), nmod_poly_mat_entry(Ay, i, 0), one, ctx->cyclo_poly);
+            evmlr_crt_mulmod(nmod_poly_mat_entry(Ay, i, 0), nmod_poly_mat_entry(Ay, i, 0), one, ctx->cyclo_poly);
         }
         evmlr_utils_highs_mat(proof->w, Ay);
 
@@ -116,7 +117,7 @@ int evmlr_lin_prove(evmlr_lin_proof_t proof,
 
         // Compute z_1 = y + c s_1
         for (slong i = 0; i < ctx->m; i++) {
-            nmod_poly_mulmod(cs_i, c, nmod_poly_mat_entry(s_1, i, 0), ctx->cyclo_poly);
+            evmlr_crt_mulmod(cs_i, c, nmod_poly_mat_entry(s_1, i, 0), ctx->cyclo_poly);
             nmod_poly_add(nmod_poly_mat_entry(proof->z_1, i, 0), nmod_poly_mat_entry(y, i, 0), cs_i);
         }
 
@@ -129,7 +130,7 @@ int evmlr_lin_prove(evmlr_lin_proof_t proof,
         for (slong i = 0; i < ctx->k; i++) {
             nmod_poly_t cs2_i;
             nmod_poly_init(cs2_i, MOD_Q);
-            nmod_poly_mulmod(cs2_i, c, nmod_poly_mat_entry(s_2, i, 0), ctx->cyclo_poly);
+            evmlr_crt_mulmod(cs2_i, c, nmod_poly_mat_entry(s_2, i, 0), ctx->cyclo_poly);
             nmod_poly_sub(nmod_poly_mat_entry(Ay_minus_cs2, i, 0), nmod_poly_mat_entry(Ay, i, 0), cs2_i);
             nmod_poly_clear(cs2_i);
         }
@@ -154,10 +155,10 @@ int evmlr_lin_prove(evmlr_lin_proof_t proof,
         // Compute z_2 = HINT(Az_1 - ct_1, ct_0)
         nmod_poly_mat_mul(Az, A, proof->z_1);
         for (slong i = 0; i < ctx->k; i++) {
-            nmod_poly_mulmod(nmod_poly_mat_entry(Az, i, 0), nmod_poly_mat_entry(Az, i, 0), one, ctx->cyclo_poly);
+            evmlr_crt_mulmod(nmod_poly_mat_entry(Az, i, 0), nmod_poly_mat_entry(Az, i, 0), one, ctx->cyclo_poly);
             
-            nmod_poly_mulmod(nmod_poly_mat_entry(ct_1, i, 0), c, nmod_poly_mat_entry(t_1, i, 0), ctx->cyclo_poly);
-            nmod_poly_mulmod(nmod_poly_mat_entry(ct_0, i, 0), c, nmod_poly_mat_entry(t_0, i, 0), ctx->cyclo_poly);
+            evmlr_crt_mulmod(nmod_poly_mat_entry(ct_1, i, 0), c, nmod_poly_mat_entry(t_1, i, 0), ctx->cyclo_poly);
+            evmlr_crt_mulmod(nmod_poly_mat_entry(ct_0, i, 0), c, nmod_poly_mat_entry(t_0, i, 0), ctx->cyclo_poly);
             
             nmod_poly_sub(nmod_poly_mat_entry(Az_minus_ct1, i, 0), nmod_poly_mat_entry(Az, i, 0), nmod_poly_mat_entry(ct_1, i, 0));
         }
@@ -223,8 +224,8 @@ int evmlr_lin_verify(const evmlr_lin_proof_t proof,
     nmod_poly_mat_mul(Az, A, proof->z_1);
     
     for (slong i = 0; i < ctx->k; i++) {
-        nmod_poly_mulmod(nmod_poly_mat_entry(Az, i, 0), nmod_poly_mat_entry(Az, i, 0), one, ctx->cyclo_poly);
-        nmod_poly_mulmod(nmod_poly_mat_entry(ct_1, i, 0), c, nmod_poly_mat_entry(t_1, i, 0), ctx->cyclo_poly);
+        evmlr_crt_mulmod(nmod_poly_mat_entry(Az, i, 0), nmod_poly_mat_entry(Az, i, 0), one, ctx->cyclo_poly);
+        evmlr_crt_mulmod(nmod_poly_mat_entry(ct_1, i, 0), c, nmod_poly_mat_entry(t_1, i, 0), ctx->cyclo_poly);
         nmod_poly_sub(nmod_poly_mat_entry(Az_minus_ct1, i, 0), nmod_poly_mat_entry(Az, i, 0), nmod_poly_mat_entry(ct_1, i, 0));
     }
 

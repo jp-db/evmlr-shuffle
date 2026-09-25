@@ -1,3 +1,4 @@
+#include "evmlr_crt.h"
 #include "evmlr_shuffle.h"
 #include "evmlr_challenge.h"
 #include "evmlr_utils.h"
@@ -141,19 +142,19 @@ static void setup_A_t_u(nmod_poly_mat_t A_u, nmod_poly_mat_t t_u, const nmod_pol
         nmod_poly_struct* h_pub_i = nmod_poly_mat_entry(h_pub, i, 0);
         nmod_poly_zero(h_pub_i);
         for (int j = 0; j < L; j++) {
-            nmod_poly_mulmod(tmp, nmod_poly_mat_entry(pp->c_star[i]->c, j, 0), nmod_poly_mat_entry(Lambda, j, 0), ctx->com_ctx->cyclo_poly);
+            evmlr_crt_mulmod(tmp, nmod_poly_mat_entry(pp->c_star[i]->c, j, 0), nmod_poly_mat_entry(Lambda, j, 0), ctx->com_ctx->cyclo_poly);
             nmod_poly_add(h_pub_i, h_pub_i, tmp);
         }
         nmod_poly_zero(tmp_bin);
         evmlr_utils_int_to_bin(tmp_bin, i);
-        nmod_poly_mulmod(tmp_bin, tmp_bin, beta, ctx->com_ctx->cyclo_poly);
+        evmlr_crt_mulmod(tmp_bin, tmp_bin, beta, ctx->com_ctx->cyclo_poly);
         nmod_poly_add(h_pub_i, h_pub_i, tmp_bin);
         nmod_poly_sub(h_pub_i, h_pub_i, alpha);
 
         nmod_poly_struct* h_hat_pub_i = nmod_poly_mat_entry(h_hat_pub, i, 0);
         nmod_poly_zero(h_hat_pub_i);
         for (int j = 0; j < L; j++) {
-            nmod_poly_mulmod(tmp, nmod_poly_mat_entry(pp->c_hat[i], j, 0), nmod_poly_mat_entry(Lambda, j, 0), ctx->com_ctx->cyclo_poly);
+            evmlr_crt_mulmod(tmp, nmod_poly_mat_entry(pp->c_hat[i], j, 0), nmod_poly_mat_entry(Lambda, j, 0), ctx->com_ctx->cyclo_poly);
             nmod_poly_add(h_hat_pub_i, h_hat_pub_i, tmp);
         }
         nmod_poly_sub(h_hat_pub_i, h_hat_pub_i, alpha);
@@ -165,7 +166,7 @@ static void setup_A_t_u(nmod_poly_mat_t A_u, nmod_poly_mat_t t_u, const nmod_pol
     for (int j = 0; j < K_LWE + L; j++) {
         nmod_poly_struct* V_j = nmod_poly_mat_entry(V, 0, j);
         for (int k = 0; k < L; k++) {
-            nmod_poly_mulmod(tmp, nmod_poly_mat_entry(Lambda, k, 0), nmod_poly_mat_entry(ctx->hpke_ctx->otse_ctx->H_prime, k, j), ctx->com_ctx->cyclo_poly);
+            evmlr_crt_mulmod(tmp, nmod_poly_mat_entry(Lambda, k, 0), nmod_poly_mat_entry(ctx->hpke_ctx->otse_ctx->H_prime, k, j), ctx->com_ctx->cyclo_poly);
             nmod_poly_add(V_j, V_j, tmp);
         }
     }
@@ -194,13 +195,13 @@ static void setup_A_t_u(nmod_poly_mat_t A_u, nmod_poly_mat_t t_u, const nmod_pol
 
         nmod_poly_struct* sig_coeff = nmod_poly_mat_entry(A_u, i, i * cols_per_i + Cw);
         if (i == 0) {
-            nmod_poly_mulmod(sig_coeff, gamma, beta, ctx->com_ctx->cyclo_poly);
+            evmlr_crt_mulmod(sig_coeff, gamma, beta, ctx->com_ctx->cyclo_poly);
             nmod_poly_neg(sig_coeff, sig_coeff);
         } else if (i < N - 1) {
-            nmod_poly_mulmod(sig_coeff, nmod_poly_mat_entry(u, i-1, 0), beta, ctx->com_ctx->cyclo_poly);
+            evmlr_crt_mulmod(sig_coeff, nmod_poly_mat_entry(u, i-1, 0), beta, ctx->com_ctx->cyclo_poly);
             nmod_poly_neg(sig_coeff, sig_coeff);
         } else {
-            nmod_poly_mulmod(sig_coeff, nmod_poly_mat_entry(u, N-2, 0), beta, ctx->com_ctx->cyclo_poly);
+            evmlr_crt_mulmod(sig_coeff, nmod_poly_mat_entry(u, N-2, 0), beta, ctx->com_ctx->cyclo_poly);
             nmod_poly_neg(sig_coeff, sig_coeff);
         }
 
@@ -216,7 +217,7 @@ static void setup_A_t_u(nmod_poly_mat_t A_u, nmod_poly_mat_t t_u, const nmod_pol
         }
 
         for (int j = 0; j < Cd; j++) {
-            nmod_poly_mulmod(nmod_poly_mat_entry(A_u, i, i * cols_per_i + Cw + 1 + j), factor, nmod_poly_mat_entry(M_d, 0, j), ctx->com_ctx->cyclo_poly);
+            evmlr_crt_mulmod(nmod_poly_mat_entry(A_u, i, i * cols_per_i + Cw + 1 + j), factor, nmod_poly_mat_entry(M_d, 0, j), ctx->com_ctx->cyclo_poly);
         }
         nmod_poly_clear(factor);
 
@@ -225,16 +226,16 @@ static void setup_A_t_u(nmod_poly_mat_t A_u, nmod_poly_mat_t t_u, const nmod_pol
         nmod_poly_struct* h_hat_pub_i = nmod_poly_mat_entry(h_hat_pub, i, 0);
         
         if (i == 0) {
-            nmod_poly_mulmod(tmp, gamma, h_hat_pub_i, ctx->com_ctx->cyclo_poly);
-            nmod_poly_mulmod(tmp2, nmod_poly_mat_entry(u, 0, 0), h_pub_i, ctx->com_ctx->cyclo_poly);
+            evmlr_crt_mulmod(tmp, gamma, h_hat_pub_i, ctx->com_ctx->cyclo_poly);
+            evmlr_crt_mulmod(tmp2, nmod_poly_mat_entry(u, 0, 0), h_pub_i, ctx->com_ctx->cyclo_poly);
             nmod_poly_add(t_u_i, tmp, tmp2);
         } else if (i < N - 1) {
-            nmod_poly_mulmod(tmp, nmod_poly_mat_entry(u, i-1, 0), h_hat_pub_i, ctx->com_ctx->cyclo_poly);
-            nmod_poly_mulmod(tmp2, nmod_poly_mat_entry(u, i, 0), h_pub_i, ctx->com_ctx->cyclo_poly);
+            evmlr_crt_mulmod(tmp, nmod_poly_mat_entry(u, i-1, 0), h_hat_pub_i, ctx->com_ctx->cyclo_poly);
+            evmlr_crt_mulmod(tmp2, nmod_poly_mat_entry(u, i, 0), h_pub_i, ctx->com_ctx->cyclo_poly);
             nmod_poly_add(t_u_i, tmp, tmp2);
         } else {
-            nmod_poly_mulmod(tmp, nmod_poly_mat_entry(u, N-2, 0), h_hat_pub_i, ctx->com_ctx->cyclo_poly);
-            nmod_poly_mulmod(tmp2, gamma, h_pub_i, ctx->com_ctx->cyclo_poly);
+            evmlr_crt_mulmod(tmp, nmod_poly_mat_entry(u, N-2, 0), h_hat_pub_i, ctx->com_ctx->cyclo_poly);
+            evmlr_crt_mulmod(tmp2, gamma, h_pub_i, ctx->com_ctx->cyclo_poly);
             if (N % 2 != 0) nmod_poly_neg(tmp2, tmp2);
             nmod_poly_add(t_u_i, tmp, tmp2);
         }
@@ -360,14 +361,14 @@ void evmlr_shuffle_phase_2(nmod_poly_mat_t h, nmod_poly_mat_t h_hat, evmlr_shuff
     nmod_poly_mat_t w;
     nmod_poly_mat_init(w, N, 1, MOD_Q);
 
-    nmod_poly_mulmod(nmod_poly_vec_entry(w, 0), nmod_poly_vec_entry(Theta, 0), nmod_poly_vec_entry(h, 0), ctx->com_ctx->cyclo_poly);
+    evmlr_crt_mulmod(nmod_poly_vec_entry(w, 0), nmod_poly_vec_entry(Theta, 0), nmod_poly_vec_entry(h, 0), ctx->com_ctx->cyclo_poly);
     for (slong i = 1; i < N - 1; i++) {
         // w_i = Θ_{i-1} * h^hat_i + Θ_i * h_i
-        nmod_poly_mulmod(nmod_poly_vec_entry(w, i), nmod_poly_vec_entry(Theta, i-1), nmod_poly_vec_entry(h_hat, i), ctx->com_ctx->cyclo_poly);
-        nmod_poly_mulmod(tmp, nmod_poly_vec_entry(Theta, i), nmod_poly_vec_entry(h, i), ctx->com_ctx->cyclo_poly);
+        evmlr_crt_mulmod(nmod_poly_vec_entry(w, i), nmod_poly_vec_entry(Theta, i-1), nmod_poly_vec_entry(h_hat, i), ctx->com_ctx->cyclo_poly);
+        evmlr_crt_mulmod(tmp, nmod_poly_vec_entry(Theta, i), nmod_poly_vec_entry(h, i), ctx->com_ctx->cyclo_poly);
         nmod_poly_add(nmod_poly_vec_entry(w, i), nmod_poly_vec_entry(w, i), tmp);
     }
-    nmod_poly_mulmod(nmod_poly_vec_entry(w, N-1), nmod_poly_vec_entry(Theta, N-2),
+    evmlr_crt_mulmod(nmod_poly_vec_entry(w, N-1), nmod_poly_vec_entry(Theta, N-2),
                      nmod_poly_vec_entry(h_hat, N-1), ctx->com_ctx->cyclo_poly);
 
     // TODO see coefficient range
@@ -421,10 +422,10 @@ void evmlr_shuffle_phase_3(evmlr_shuffle_proof_t proof, const nmod_poly_mat_t h,
     for (slong i = 0; i < N - 1; i++) {
         // h_hat[i] / h[i]
         nmod_poly_invmod(tmp, nmod_poly_vec_entry(h, i), ctx->com_ctx->cyclo_poly);
-        nmod_poly_mulmod(tmp, nmod_poly_vec_entry(h_hat, i), tmp, ctx->com_ctx->cyclo_poly);
+        evmlr_crt_mulmod(tmp, nmod_poly_vec_entry(h_hat, i), tmp, ctx->com_ctx->cyclo_poly);
 
         // update gamma * \prod_{j=1}^{i} (h_hat[j] / h[j])
-        nmod_poly_mulmod(running_prod, running_prod, tmp, ctx->com_ctx->cyclo_poly);
+        evmlr_crt_mulmod(running_prod, running_prod, tmp, ctx->com_ctx->cyclo_poly);
 
         // 3. (-1)^(i+1). If i is even, negate the running product
         if (i % 2 == 0) nmod_poly_neg(tmp, running_prod);
@@ -491,7 +492,7 @@ void lambda_setup(nmod_poly_mat_t Lambda, const nmod_poly_t lambda, const nmod_p
             case 0: nmod_poly_one(Lambda_i);           break;
             case 1: nmod_poly_set(Lambda_i, lambda); break;
             default:
-                nmod_poly_mulmod(Lambda_i, nmod_poly_mat_entry(Lambda, i-1, 0), lambda, cyclo_poly);
+                evmlr_crt_mulmod(Lambda_i, nmod_poly_mat_entry(Lambda, i-1, 0), lambda, cyclo_poly);
                 break;
         }
     }
@@ -507,7 +508,7 @@ void calc_z(nmod_poly_t z, const evmlr_otse_ciphertext_t cipher, const nmod_poly
     for (int j = 0; j < L; j++) {
         nmod_poly_struct* a_j = nmod_poly_mat_entry(a, j, 0);
         nmod_poly_sub(a_j, nmod_poly_mat_entry(cipher->c, j, 0), a_j);
-        nmod_poly_mulmod(a_j, a_j, nmod_poly_mat_entry(Lambda, j, 0), ctx->com_ctx->cyclo_poly);
+        evmlr_crt_mulmod(a_j, a_j, nmod_poly_mat_entry(Lambda, j, 0), ctx->com_ctx->cyclo_poly);
         nmod_poly_add(z, z, a_j);
     }
 
@@ -522,7 +523,7 @@ void calc_z_hat(nmod_poly_t z_hat, const nmod_poly_mat_t c_hat, const nmod_poly_
     for (int j = 0; j < L; j++) {
         nmod_poly_struct* c_hat_j = nmod_poly_mat_entry(c_hat, j, 0);
         nmod_poly_struct* Lambda_j = nmod_poly_mat_entry(Lambda, j, 0);
-        nmod_poly_mulmod(tmp, c_hat_j, Lambda_j, ctx->com_ctx->cyclo_poly);
+        evmlr_crt_mulmod(tmp, c_hat_j, Lambda_j, ctx->com_ctx->cyclo_poly);
         nmod_poly_add(z_hat, z_hat, tmp);
     }
     nmod_poly_clear(tmp);
@@ -531,7 +532,7 @@ void calc_z_hat(nmod_poly_t z_hat, const nmod_poly_mat_t c_hat, const nmod_poly_
 void calc_h(nmod_poly_t h, const nmod_poly_t z, const nmod_poly_t bin_poly, const nmod_poly_t alpha,
             const nmod_poly_t beta, const nmod_poly_t cyclo_poly) {
     nmod_poly_set(h, bin_poly);
-    nmod_poly_mulmod(h, h, beta, cyclo_poly);
+    evmlr_crt_mulmod(h, h, beta, cyclo_poly);
     nmod_poly_add(h, z, h);
     nmod_poly_sub(h, h, alpha);
 }

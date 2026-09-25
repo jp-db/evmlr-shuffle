@@ -1,4 +1,5 @@
 #include "evmlr_utils.h"
+#include "evmlr_crt.h"
 #include "sys/random.h"
 #include "stdint.h"
 #include "flint/fmpz.h"
@@ -289,7 +290,8 @@ void nmod_poly_mat_mulmod(nmod_poly_mat_t res, const nmod_poly_mat_t mat1, const
     nmod_poly_mat_mul(res, mat1, mat2);
     for (slong i = 0; i < res->r; i++) {
         for (slong j = 0; j < res->c; j++) {
-            nmod_poly_rem(nmod_poly_mat_entry(res, i, j), nmod_poly_mat_entry(res, i, j), mod);
+            nmod_poly_struct* e = nmod_poly_mat_entry(res, i, j);
+            evmlr_crt_negacyclic_rem(e, e, mod);
         }
     }
 }
