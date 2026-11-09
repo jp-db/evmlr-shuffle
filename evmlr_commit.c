@@ -1,6 +1,7 @@
 #include "evmlr_crt.h"
 #include "evmlr_commit.h"
 #include "evmlr_utils.h"
+#include <stdint.h>
 #ifdef MAIN
 #include "test.h"
 #include "bench.h"
@@ -74,10 +75,13 @@ void evmlr_commit_clear(evmlr_commit_t com) {
     nmod_poly_mat_clear(com->c);
 }
 
-slong nmod_poly_norm_sqr(const nmod_poly_t poly) {
-   slong norm = 0;
+/* The norms are summed in 64 bits: slong and ulong are only 32 bits on wasm32,
+ * where 2 * K_SIS polynomials of DEGREE_N coefficients up to MOD_Q / 2 can
+ * wrap the sum and let an oversized r pass verify_norm. */
+int64_t nmod_poly_norm_sqr(const nmod_poly_t poly) {
+   int64_t norm = 0;
    for (slong i = 0; i < nmod_poly_length(poly); i++) {
-         slong coeff = nmod_poly_get_coeff_ui(poly, i);
+         int64_t coeff = nmod_poly_get_coeff_ui(poly, i);
          if (coeff > MOD_Q / 2) {
             coeff -= MOD_Q;
          }
@@ -87,7 +91,7 @@ slong nmod_poly_norm_sqr(const nmod_poly_t poly) {
 }
 
 int verify_norm(const ulong L, const nmod_poly_mat_t msg, const nmod_poly_mat_t r, ulong b_sqr) {
-    ulong total_norm = 0;
+    uint64_t total_norm = 0;
     for (slong i = 0; i < L; i++) {
         total_norm += nmod_poly_hamming_weight(nmod_poly_mat_entry(msg, i, 0));
     }

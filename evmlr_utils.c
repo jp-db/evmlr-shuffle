@@ -61,6 +61,21 @@ void evmlr_utils_int_to_bin(nmod_poly_t poly, ulong n) {
 void evmlr_utils_random(void *buf, size_t len) {
     uint8_t *p = (uint8_t *) buf;
 
+#ifdef __EMSCRIPTEN__
+    /* WebAssembly has no getrandom system call. Emscripten's getentropy()
+     * draws from crypto.getRandomValues() in browsers and crypto.randomFillSync
+     * in Node, and returns at most 256 bytes per call. */
+    while (len > 0) {
+        size_t n = len < 256 ? len : 256;
+
+        if (getentropy(p, n) != 0) {
+            perror("getentropy");
+            abort();
+        }
+        p += n;
+        len -= n;
+    }
+#else
     while (len > 0) {
         ssize_t n = getrandom(p, len, 0);
 
@@ -74,6 +89,7 @@ void evmlr_utils_random(void *buf, size_t len) {
         p += n;
         len -= (size_t) n;
     }
+#endif
 }
 
 /* The largest u for which u mod bound is still uniform: 2^64 minus the

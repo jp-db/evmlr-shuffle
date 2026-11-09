@@ -56,3 +56,15 @@ dkms.conf
 
 # debug information files
 *.dwo
+
+# WebAssembly build (Makefile.wasm, wasm/build-deps.sh)
+wasm/build/
+wasm/deps/
+# Anything emcc emits if run by hand outside wasm/build.
+*.wasm
+!Makefile.wasm
+*.wasm.map
+*.js.map
+*.mjs.map
+/evmlr_*.js
+/evmlr*.mjs

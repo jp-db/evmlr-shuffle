@@ -73,6 +73,20 @@ make OPT=-O0                    # unoptimised, for debugging
 make EXTRA_CFLAGS=-fsanitize=address
 ```
 
+### WebAssembly
+
+The voting protocol (encryption, proofs, shuffle) also builds to WebAssembly
+with Emscripten, through a separate makefile that leaves the native build
+untouched:
+
+```sh
+wasm/build-deps.sh          # once: GMP, MPFR and FLINT for wasm32
+make -f Makefile.wasm test  # build, then run the test suites under Node
+```
+
+See [wasm/README.md](wasm/README.md) for the JS API and for what the WASM
+build replaces (randomness, AES-NI, the SSE Gaussian sampler).
+
 To tweak the parameters of the schemes, mainly the number of messages, you can
 modify `evmlr_params.h` in the root directory. Header dependencies are tracked,
 so editing it rebuilds everything that depends on it.

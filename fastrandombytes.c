@@ -5,10 +5,15 @@
 #include "fastrandombytes.h"
 #include "randombytes.h"
 #include <string.h>
-#include <x86intrin.h>
 
 static prg_t global;
 static int global_seeded = 0;
+
+/* With EVMLR_PORTABLE (every WebAssembly build) prg_setseed and prg_bytes
+ * come from fastrandombytes_portable.c instead of the AES-NI code below. */
+#ifndef EVMLR_PORTABLE
+#include <x86intrin.h>
+
 /* The counter is incremented as a 64-bit lane, so it wraps only after 2^64
  * blocks; a 32-bit add would repeat the keystream after 2^32. */
 static const __m128i ONE = { 1, 0 };
@@ -124,6 +129,8 @@ void prg_bytes(prg_t *prg, unsigned char *r, unsigned long long rlen) {
 		memcpy(r + (i << 4), ct, rlen & 0x0f);
 	}
 }
+
+#endif /* !EVMLR_PORTABLE */
 
 void fastrandombytes_setseed(const unsigned char *randomness) {
 	prg_setseed(&global, randomness);

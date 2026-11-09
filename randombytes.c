@@ -2,6 +2,31 @@
  * https://github.com/tpoeppelmann/newhope */
 
 #include "randombytes.h"
+
+#ifdef __EMSCRIPTEN__
+#include <stdio.h>
+#include <stdlib.h>
+#include <sys/random.h>
+
+/* WebAssembly has no /dev/urandom unless the virtual filesystem is linked in;
+ * getentropy() reaches crypto.getRandomValues() (browser) or
+ * crypto.randomFillSync() (Node) directly, at most 256 bytes per call. */
+int randombytes(unsigned char *x, unsigned long long xlen) {
+	while (xlen > 0) {
+		size_t n = xlen < 256 ? (size_t) xlen : 256;
+
+		if (getentropy(x, n) != 0) {
+			perror("randombytes: getentropy");
+			abort();
+		}
+		x += n;
+		xlen -= n;
+	}
+
+	return 0;
+}
+
+#else
 #include <sys/types.h>
 #include <sys/stat.h>
 #include <fcntl.h>
@@ -39,3 +64,4 @@ int randombytes(unsigned char *x, unsigned long long xlen) {
 
 	return 0;
 }
+#endif

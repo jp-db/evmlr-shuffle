@@ -66,10 +66,18 @@ static inline int evmlr_runs_benches(evmlr_mode_t mode) {
 static inline void evmlr_rand_init(flint_rand_t state) {
     ulong seed[2];
     flint_rand_init(state);
+#ifdef __EMSCRIPTEN__
+    /* No getrandom system call in WebAssembly; see evmlr_utils_random. */
+    if (getentropy(seed, sizeof(seed)) != 0) {
+        perror("evmlr: getentropy");
+        abort();
+    }
+#else
     if (getrandom(seed, sizeof(seed), 0) != (ssize_t) sizeof(seed)) {
         perror("evmlr: getrandom");
         abort();
     }
+#endif
     flint_rand_set_seed(state, seed[0], seed[1]);
 }
 

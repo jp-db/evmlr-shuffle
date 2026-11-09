@@ -66,6 +66,9 @@ void evmlr_challenge_add_bytes(evmlr_challenge_t chal, const uint8_t* bytes, siz
     SHA256Input(&chal->sha, bytes, len);
 }
 
+/* Challenge coins are read from the stream as 64-bit words whatever the size
+ * of ulong (64 bits on x86-64, 32 on wasm32), so every platform expands a
+ * transcript into the same challenges. */
 static void ensure_seeded(evmlr_challenge_t chal) {
     if (!chal->finalized) {
         SHA256Result(&(chal->sha), chal->hash);
@@ -77,7 +80,7 @@ static void ensure_seeded(evmlr_challenge_t chal) {
 void evmlr_challenge_get_poly(nmod_poly_t out, int degree, evmlr_challenge_t chal) {
     ensure_seeded(chal);
     if (out) nmod_poly_zero(out);
-    ulong buf;
+    uint64_t buf;
     for (int i = 0; i < degree; i++) {
         prg_bytes(&chal->prg, (unsigned char *)&buf, sizeof(buf));
         if (out) nmod_poly_set_coeff_ui(out, i, buf % MOD_Q);
@@ -89,11 +92,11 @@ void evmlr_challenge_get_poly_one_ternary(nmod_poly_t out, evmlr_challenge_t cha
     if (out) nmod_poly_zero(out);
     int count = 0;
     while (count < 1) {
-        ulong idx;
-        prg_bytes(&chal->prg, (unsigned char *)&idx, sizeof(ulong));
+        uint64_t idx;
+        prg_bytes(&chal->prg, (unsigned char *)&idx, sizeof(idx));
         idx %= DEGREE_N;
         if (!out || nmod_poly_get_coeff_ui(out, idx) == 0) {
-            ulong sign;
+            uint8_t sign;
             prg_bytes(&chal->prg, (unsigned char *)&sign, 1);
             if (out) nmod_poly_set_coeff_ui(out, idx, (sign & 1) ? 1 : MOD_Q - 1);
             count++;
@@ -104,14 +107,14 @@ void evmlr_challenge_get_poly_one_ternary(nmod_poly_t out, evmlr_challenge_t cha
 void evmlr_challenge_get_poly_symmetric(nmod_poly_t out, evmlr_challenge_t chal) {
     ensure_seeded(chal);
     if (out) nmod_poly_zero(out);
-    ulong buf;
+    uint64_t buf;
     // Sample c_0
     prg_bytes(&chal->prg, (unsigned char *)&buf, sizeof(buf));
     if (out) nmod_poly_set_coeff_ui(out, 0, buf % MOD_Q);
     // Sample c_i and set c_i, -c_i
     for (int i = 1; i < (DEGREE_N >> 1); i++) {
         prg_bytes(&chal->prg, (unsigned char *)&buf, sizeof(buf));
-        ulong val = buf % MOD_Q;
+        ulong val = (ulong) (buf % MOD_Q);
         if (out) {
             nmod_poly_set_coeff_ui(out, i, val);
             if (val > 0) {
@@ -125,17 +128,17 @@ void evmlr_challenge_get_poly_symmetric(nmod_poly_t out, evmlr_challenge_t chal)
 
 void evmlr_challenge_get_val(ulong* val, evmlr_challenge_t chal) {
     ensure_seeded(chal);
-    ulong buf;
+    uint64_t buf;
     prg_bytes(&chal->prg, (unsigned char *)&buf, sizeof(buf));
-    *val = buf % MOD_Q;
+    *val = (ulong) (buf % MOD_Q);
 }
 
 void evmlr_challenge_get_vector(ulong* vec, slong len, evmlr_challenge_t chal) {
     ensure_seeded(chal);
-    ulong buf;
+    uint64_t buf;
     for (slong i = 0; i < len; i++) {
         prg_bytes(&chal->prg, (unsigned char *)&buf, sizeof(buf));
-        vec[i] = buf % MOD_Q;
+        vec[i] = (ulong) (buf % MOD_Q);
     }
 }
 

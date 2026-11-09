@@ -1,0 +1,128 @@
+# WebAssembly build, with Emscripten. The native Makefile is unchanged; this
+# one compiles the same sources with emcc, swapping in the portable versions
+# of the x86-only code (see evmlr_portable.h):
+#
+#   fastrandombytes.c     AES-NI          -> + fastrandombytes_portable.c
+#   gaussian.cpp          SSE4.1 + VCL    -> gaussian_portable.c
+#   getrandom / urandom   system calls    -> getentropy (crypto.getRandomValues)
+#   cpucycles.c           rdtsc           -> performance.now()
+#
+# One-time setup (builds GMP, MPFR and FLINT for wasm32 into wasm/deps):
+#   wasm/build-deps.sh
+#
+# Then:
+#   make -f Makefile.wasm            # library module + Node test binaries
+#   make -f Makefile.wasm test       # run every test suite under Node
+#   make -f Makefile.wasm bench      # run the benchmarks under Node
+#   make -f Makefile.wasm lib        # only wasm/build/evmlr.mjs + evmlr.wasm
+#   make -f Makefile.wasm demo       # cast and count a small election via the library
+#   make -f Makefile.wasm clean
+#
+# Objects go to wasm/build, so they never mix with the native *.o files.
+
+EMCC ?= emcc
+NODE ?= node
+OPT  ?= -O3
+EXTRA_CFLAGS ?=
+
+DEPS_PREFIX ?= wasm/deps/prefix
+B = wasm/build
+
+# No -msimd128 and no -pthread: the module runs on any WebAssembly engine,
+# without SIMD or SharedArrayBuffer (so no cross-origin isolation is needed).
+CFLAGS   = $(OPT) -Wall -I. -I$(DEPS_PREFIX)/include $(EXTRA_CFLAGS)
+DEPFLAGS = -MMD -MP
+LIBS     = $(DEPS_PREFIX)/lib/libflint.a $(DEPS_PREFIX)/lib/libmpfr.a $(DEPS_PREFIX)/lib/libgmp.a
+
+# The code keeps sizeable arrays on the stack (VLAs over DEGREE_N and over the
+# number of messages); Emscripten's default stack is 64 KiB. Native Linux
+# gives 8 MiB.
+LDFLAGS = $(OPT) -sALLOW_MEMORY_GROWTH=1 -sSTACK_SIZE=8MB -sINITIAL_MEMORY=64MB
+
+# Test/benchmark binaries for Node: `node wasm/build/evmlr_voting.js test`.
+# NODERAWFS is not needed; EXIT_RUNTIME makes main's return the exit status.
+NODE_LDFLAGS = $(LDFLAGS) -sENVIRONMENT=node -sEXIT_RUNTIME=1
+
+# The library: an ES module exporting a factory, for browsers, workers and Node.
+LIB_EXPORTS = _evmlr_wasm_param,_evmlr_wasm_setup,_evmlr_wasm_election_free,_evmlr_wasm_cast,_evmlr_wasm_ballot_free,_evmlr_wasm_count,_malloc,_free
+LIB_LDFLAGS = $(LDFLAGS) -sMODULARIZE=1 -sEXPORT_ES6=1 -sEXPORT_NAME=createEvmlrModule \
+	-sENVIRONMENT=web,worker,node \
+	-sEXPORTED_FUNCTIONS=$(LIB_EXPORTS) -sEXPORTED_RUNTIME_METHODS=HEAPU32,HEAP32
+
+PREFIX  = evmlr
+TARGETS = mlpke commit otse hpke shuffle lin_proof lin_comp bin_proof voting enc_proof
+JS_BINS = $(TARGETS:%=$(B)/$(PREFIX)_%.js)
+LIB     = $(B)/evmlr.mjs
+
+COMMON_OBJS = $(PREFIX)_utils.o $(PREFIX)_crt.o test.o bench.o cpucycles.o randombytes.o
+# fastrandombytes.o keeps the global stream; the AES itself is portable.
+PRG_OBJS    = fastrandombytes.o fastrandombytes_portable.o
+GAUSS_OBJS  = gaussian_portable.o
+
+# Same object lists as the native Makefile, with the portable substitutions.
+$(PREFIX)_hpke_EXTRA      = $(PREFIX)_otse.o $(PREFIX)_mlpke.o
+$(PREFIX)_shuffle_EXTRA   = $(PREFIX)_hpke.o $(PREFIX)_commit.o $(PREFIX)_mlpke.o $(PREFIX)_otse.o sha224-256.o $(PRG_OBJS) $(PREFIX)_lin_proof.o $(PREFIX)_bin_proof.o $(PREFIX)_challenge.o $(GAUSS_OBJS)
+$(PREFIX)_lin_proof_EXTRA = sha224-256.o $(PRG_OBJS) $(PREFIX)_challenge.o $(GAUSS_OBJS)
+$(PREFIX)_lin_comp_EXTRA  = sha224-256.o $(PRG_OBJS) $(PREFIX)_challenge.o
+$(PREFIX)_bin_proof_EXTRA = sha224-256.o $(PRG_OBJS) $(PREFIX)_commit.o $(PREFIX)_challenge.o $(GAUSS_OBJS)
+$(PREFIX)_voting_EXTRA    = $(PREFIX)_shuffle.o $(PREFIX)_hpke.o $(PREFIX)_commit.o $(PREFIX)_mlpke.o $(PREFIX)_otse.o sha224-256.o $(PRG_OBJS) $(PREFIX)_lin_proof.o $(PREFIX)_bin_proof.o $(PREFIX)_challenge.o $(PREFIX)_enc_proof.o $(GAUSS_OBJS)
+$(PREFIX)_enc_proof_EXTRA = $(PREFIX)_lin_proof.o $(PREFIX)_mlpke.o $(PREFIX)_otse.o $(PREFIX)_hpke.o $(PREFIX)_challenge.o sha224-256.o $(PRG_OBJS) $(GAUSS_OBJS)
+
+LIB_OBJS = $(addprefix $(B)/, wasm_evmlr_wasm.o $($(PREFIX)_voting_EXTRA) $(PREFIX)_voting.o $(COMMON_OBJS))
+
+.PHONY: all lib bins test bench demo clean check-deps
+
+all: lib bins
+
+lib: $(LIB)
+
+bins: $(JS_BINS)
+
+## test: run every test suite under Node
+test: $(JS_BINS)
+	@fail=0; for b in $(JS_BINS); do \
+		echo "=== $$b ==="; $(NODE) $$b test || fail=1; \
+	done; exit $$fail
+
+## bench: run every benchmark suite under Node (slow)
+bench: $(JS_BINS)
+	@fail=0; for b in $(JS_BINS); do \
+		echo "=== $$b ==="; $(NODE) $$b bench || fail=1; \
+	done; exit $$fail
+
+## demo: setup, cast and count through the JS library (wasm/demo.mjs)
+demo: $(LIB)
+	$(NODE) wasm/demo.mjs
+
+check-deps:
+	@test -f $(DEPS_PREFIX)/lib/libflint.a || { \
+		echo "Makefile.wasm: $(DEPS_PREFIX)/lib/libflint.a is missing; run wasm/build-deps.sh first" >&2; \
+		exit 1; }
+
+$(B):
+	mkdir -p $(B)
+
+.SECONDARY:
+.SECONDEXPANSION:
+$(B)/%.js: $(B)/%.main.o $$(addprefix $(B)/,$$($$*_EXTRA)) $(addprefix $(B)/,$(COMMON_OBJS)) | check-deps
+	$(EMCC) $^ $(LIBS) $(NODE_LDFLAGS) -o $@
+
+$(LIB): $(LIB_OBJS) | check-deps
+	$(EMCC) $^ $(LIBS) $(LIB_LDFLAGS) -o $@
+
+$(B)/%.main.o: %.c | $(B) check-deps
+	$(EMCC) $(CFLAGS) $(DEPFLAGS) -DMAIN -c $< -o $@
+
+$(B)/wasm_%.o: wasm/%.c | $(B) check-deps
+	$(EMCC) $(CFLAGS) $(DEPFLAGS) -c $< -o $@
+
+# The scalar Gaussian mirrors SSE code that never fuses a multiply and an add.
+$(B)/gaussian_portable.o: CFLAGS += -ffp-contract=off
+
+$(B)/%.o: %.c | $(B) check-deps
+	$(EMCC) $(CFLAGS) $(DEPFLAGS) -c $< -o $@
+
+clean:
+	rm -rf $(B)
+
+-include $(wildcard $(B)/*.d)
