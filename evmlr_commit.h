@@ -19,6 +19,9 @@ typedef struct {
 } evmlr_commit_struct;
 typedef evmlr_commit_struct evmlr_commit_t[1];
 
+// B^2 for a message of N polynomials (the ctx->b_sqr evmlr_commit_ctx_init sets)
+ulong compute_b(ulong N);
+
 void evmlr_commit_ctx_init(evmlr_commit_ctx_t ctx, slong N, flint_rand_t state);
 
 void evmlr_commit_ctx_clear(evmlr_commit_ctx_t ctx);

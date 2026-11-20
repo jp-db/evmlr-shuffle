@@ -43,6 +43,9 @@ void evmlr_shuffle_ctx_init(evmlr_shuffle_ctx_t ctx, slong N, slong L, flint_ran
 
 void evmlr_shuffle_ctx_clear(evmlr_shuffle_ctx_t ctx);
 
+// Frees a statement (D, c_hat, c_star) of a shuffle of ctx->N messages.
+void evmlr_shuffle_pp_clear(evmlr_shuffle_pp_t pp, const evmlr_shuffle_ctx_t ctx);
+
 void evmlr_proof_init(evmlr_shuffle_proof_t proof, const evmlr_shuffle_ctx_t ctx);
 
 void evmlr_proof_clear(evmlr_shuffle_proof_t proof, const evmlr_shuffle_ctx_t ctx);

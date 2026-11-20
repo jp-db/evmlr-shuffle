@@ -25,12 +25,70 @@ The outputs:
 | File | What it is |
 | --- | --- |
 | `wasm/build/evmlr.mjs` + `evmlr.wasm` | ES module factory (`createEvmlrModule`), for browsers, workers and Node |
-| `wasm/evmlr.mjs` | JS wrapper: `loadEvmlr()` → `setup(k)`, `election.cast(voter, vote)`, `election.count(ballots)` |
+| `wasm/evmlr.mjs` | JS wrapper, see below |
 | `wasm/build/evmlr_*.js` | the test/benchmark binaries; `node wasm/build/evmlr_voting.js test` |
 
 The module uses neither WASM SIMD nor threads, so it runs on every engine and
 needs no cross-origin isolation. Casting takes a while; in a page, run it in a
 Web Worker.
+
+## JavaScript API
+
+```js
+import { loadEvmlr } from './wasm/evmlr.mjs';
+const evmlr = await loadEvmlr();
+
+// Election authority
+const authority = evmlr.setup(3);            // 3 mixing servers
+const ppBytes = authority.exportParams();    // public: publish to voters
+const skBytes = authority.exportKeys();      // secret: to the servers
+
+// Voter page: the public parameters are all it needs
+const election = evmlr.importParams(ppBytes);
+const ballot = election.cast(voterId, [candidate]);
+const ballotBytes = ballot.toBytes();        // send to the bulletin board
+
+// Counting
+const counter = evmlr.importParams(ppBytes);
+counter.importKeys(skBytes);
+const tally = counter.count(ballots.map((b) => counter.importBallot(b)));
+```
+
+All bytes are `Uint8Array`s in the format below, so they move freely between
+the WASM module and the native code. Import errors throw `EvmlrError`, whose
+`status` is an `evmlr_ser_status_t`. Handles hold WASM memory; call `free()`
+on elections and ballots when you are done with them.
+
+## Serialization format
+
+`evmlr_serialize.h` (also used natively) encodes the public parameters, the
+secret keys, ballots with their proofs of correct encryption, and proofs of
+shuffle with their statements. Every encoding has:
+
+- a 20-byte header: magic, format version, object type, and a fingerprint of
+  the scheme parameters (`MOD_Q`, `DEGREE_N`, `K_LWE`, ...), so bytes from a
+  build with different parameters are refused;
+- fixed-width little-endian integers, the same on wasm32 and x86-64;
+- polynomial coefficients bit-packed at 12 bits mod q (6 bits mod 2^zeta).
+
+Decoding is strict: every dimension must be the one the protocol fixes,
+coefficients must be reduced, and polynomials must be normalised. So every
+object has exactly one encoding, and what is read back hashes into the
+Fiat-Shamir transcripts like the original. A truncated, padded or tampered
+ballot is refused before any proof is checked.
+
+The public parameters carry only what is sampled: `H`, the random block
+`H''` of `H' = (H'' | I)`, the servers' public keys and the commitment
+matrices. Everything else is rebuilt from the parameters.
+
+Sizes with the default parameters: about 385 KiB of public parameters and a
+54 KB ballot for 2 servers; about 575 KiB and a 100 KB ballot for 3.
+
+Counting re-creates the commitment key of the shuffle (`pp->shuf_ctx`) for
+the number of ballots it counts. So to check proofs of shuffle elsewhere,
+export the public parameters after counting. `evmlr_voting_counting` does not
+yet output the shuffle statements, so the proofs of shuffle it produces can
+be encoded but not yet checked by a third party.
 
 ## What changes for WebAssembly
 

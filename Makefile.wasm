@@ -44,13 +44,18 @@ LDFLAGS = $(OPT) -sALLOW_MEMORY_GROWTH=1 -sSTACK_SIZE=8MB -sINITIAL_MEMORY=64MB
 NODE_LDFLAGS = $(LDFLAGS) -sENVIRONMENT=node -sEXIT_RUNTIME=1
 
 # The library: an ES module exporting a factory, for browsers, workers and Node.
-LIB_EXPORTS = _evmlr_wasm_param,_evmlr_wasm_setup,_evmlr_wasm_election_free,_evmlr_wasm_cast,_evmlr_wasm_ballot_free,_evmlr_wasm_count,_malloc,_free
+LIB_FUNCS  = param setup election_free has_sk cast ballot_free ballot_voter count strerror
+LIB_FUNCS += export_pp import_pp export_sk import_sk export_ballot import_ballot
+comma := ,
+empty :=
+space := $(empty) $(empty)
+LIB_EXPORTS = $(subst $(space),$(comma),$(strip $(LIB_FUNCS:%=_evmlr_wasm_%) _malloc _free))
 LIB_LDFLAGS = $(LDFLAGS) -sMODULARIZE=1 -sEXPORT_ES6=1 -sEXPORT_NAME=createEvmlrModule \
 	-sENVIRONMENT=web,worker,node \
-	-sEXPORTED_FUNCTIONS=$(LIB_EXPORTS) -sEXPORTED_RUNTIME_METHODS=HEAPU32,HEAP32
+	-sEXPORTED_FUNCTIONS=$(LIB_EXPORTS) -sEXPORTED_RUNTIME_METHODS=HEAPU8,HEAPU32,HEAP32,UTF8ToString
 
 PREFIX  = evmlr
-TARGETS = mlpke commit otse hpke shuffle lin_proof lin_comp bin_proof voting enc_proof
+TARGETS = mlpke commit otse hpke shuffle lin_proof lin_comp bin_proof voting enc_proof serialize
 JS_BINS = $(TARGETS:%=$(B)/$(PREFIX)_%.js)
 LIB     = $(B)/evmlr.mjs
 
@@ -67,8 +72,9 @@ $(PREFIX)_lin_comp_EXTRA  = sha224-256.o $(PRG_OBJS) $(PREFIX)_challenge.o
 $(PREFIX)_bin_proof_EXTRA = sha224-256.o $(PRG_OBJS) $(PREFIX)_commit.o $(PREFIX)_challenge.o $(GAUSS_OBJS)
 $(PREFIX)_voting_EXTRA    = $(PREFIX)_shuffle.o $(PREFIX)_hpke.o $(PREFIX)_commit.o $(PREFIX)_mlpke.o $(PREFIX)_otse.o sha224-256.o $(PRG_OBJS) $(PREFIX)_lin_proof.o $(PREFIX)_bin_proof.o $(PREFIX)_challenge.o $(PREFIX)_enc_proof.o $(GAUSS_OBJS)
 $(PREFIX)_enc_proof_EXTRA = $(PREFIX)_lin_proof.o $(PREFIX)_mlpke.o $(PREFIX)_otse.o $(PREFIX)_hpke.o $(PREFIX)_challenge.o sha224-256.o $(PRG_OBJS) $(GAUSS_OBJS)
+$(PREFIX)_serialize_EXTRA = $(PREFIX)_voting.o $(PREFIX)_shuffle.o $(PREFIX)_hpke.o $(PREFIX)_commit.o $(PREFIX)_mlpke.o $(PREFIX)_otse.o sha224-256.o $(PRG_OBJS) $(PREFIX)_lin_proof.o $(PREFIX)_bin_proof.o $(PREFIX)_challenge.o $(PREFIX)_enc_proof.o $(GAUSS_OBJS)
 
-LIB_OBJS = $(addprefix $(B)/, wasm_evmlr_wasm.o $($(PREFIX)_voting_EXTRA) $(PREFIX)_voting.o $(COMMON_OBJS))
+LIB_OBJS = $(addprefix $(B)/, wasm_evmlr_wasm.o $($(PREFIX)_voting_EXTRA) $(PREFIX)_voting.o $(PREFIX)_serialize.o $(COMMON_OBJS))
 
 .PHONY: all lib bins test bench demo clean check-deps
 

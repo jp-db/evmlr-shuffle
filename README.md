@@ -87,6 +87,14 @@ make -f Makefile.wasm test  # build, then run the test suites under Node
 See [wasm/README.md](wasm/README.md) for the JS API and for what the WASM
 build replaces (randomness, AES-NI, the SSE Gaussian sampler).
 
+### Serialization
+
+`evmlr_serialize.h` imports and exports the public parameters, the secret
+keys, ballots with their proofs of correct encryption, and proofs of
+shuffle. The bytes are platform-independent: a ballot cast in the browser
+build verifies in the native one. `make serialize` runs its tests; the format
+is described in [wasm/README.md](wasm/README.md#serialization-format).
+
 To tweak the parameters of the schemes, mainly the number of messages, you can
 modify `evmlr_params.h` in the root directory. Header dependencies are tracked,
 so editing it rebuilds everything that depends on it.
