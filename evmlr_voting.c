@@ -622,7 +622,7 @@ void bench_voting_protocol(flint_rand_t state) {
     evmlr_voting_sk_t sk;
     evmlr_voting_setup(pp, sk, k_servers, state);
     uint64_t end_setup = cpucycles();
-    printf("Setup Phase: %lu cycles\n", (unsigned long)(end_setup - start_setup));
+    printf("Setup Phase: %llu cycles\n", (unsigned long long)(end_setup - start_setup));
 
     // Initialize N submissions
     evmlr_voting_submission_t subs[N];
@@ -642,8 +642,8 @@ void bench_voting_protocol(flint_rand_t state) {
         evmlr_voting_casting(subs[i], i + 1, votes[i], pp, state);
     }
     uint64_t end_casting = cpucycles();
-    printf("Casting Phase (total for %ld voters): %lu cycles (avg %lu per voter)\n",
-           N, (unsigned long)(end_casting - start_casting), (unsigned long)((end_casting - start_casting) / N));
+    printf("Casting Phase (total for %ld voters): %llu cycles (avg %llu per voter)\n",
+           N, (unsigned long long)(end_casting - start_casting), (unsigned long long)((end_casting - start_casting) / N));
 
     // 3. Counting/Decryption/Shuffling/Verification Phases
     // We will measure each sub-phase inside a custom counting loop to isolate the cycles
@@ -847,28 +847,28 @@ void bench_voting_protocol(flint_rand_t state) {
         }
     }
 
-    printf("Peel & Verify Enc Proofs Phase (total for %ld servers): %lu cycles (avg %lu per server)\n",
-           k_servers, (unsigned long)total_dec_verify_enc, (unsigned long)(total_dec_verify_enc / k_servers));
-    printf("Shuffle Prove Phase (total for %ld servers): %lu cycles (avg %lu per server)\n",
-           k_servers, (unsigned long)total_shuffle_prove, (unsigned long)(total_shuffle_prove / k_servers));
-    printf("Shuffle Verify Phase (total for %ld servers): %lu cycles (avg %lu per server)\n",
-           k_servers, (unsigned long)total_shuffle_verify, (unsigned long)(total_shuffle_verify / k_servers));
+    printf("Peel & Verify Enc Proofs Phase (total for %ld servers): %llu cycles (avg %llu per server)\n",
+           k_servers, (unsigned long long)total_dec_verify_enc, (unsigned long long)(total_dec_verify_enc / k_servers));
+    printf("Shuffle Prove Phase (total for %ld servers): %llu cycles (avg %llu per server)\n",
+           k_servers, (unsigned long long)total_shuffle_prove, (unsigned long long)(total_shuffle_prove / k_servers));
+    printf("Shuffle Verify Phase (total for %ld servers): %llu cycles (avg %llu per server)\n",
+           k_servers, (unsigned long long)total_shuffle_verify, (unsigned long long)(total_shuffle_verify / k_servers));
 
     // Calculate total cost and the percentage impact of each phase
     uint64_t total_cycles = (end_setup - start_setup) + (end_casting - start_casting) +
                             total_dec_verify_enc + total_shuffle_prove + total_shuffle_verify;
     printf("\n--- Breakdown of Phases (%ld voters, %ld servers) ---\n", N, k_servers);
-    printf("Total protocol execution cost: %lu cycles\n", (unsigned long)total_cycles);
-    printf("  1. Setup Phase:                %5.2f%% (%lu cycles)\n",
-           100.0 * (double)(end_setup - start_setup) / (double)total_cycles, (unsigned long)(end_setup - start_setup));
-    printf("  2. Casting Phase:              %5.2f%% (%lu cycles)\n",
-           100.0 * (double)(end_casting - start_casting) / (double)total_cycles, (unsigned long)(end_casting - start_casting));
-    printf("  3. Decrypt & Verify ZK Enc:    %5.2f%% (%lu cycles)\n",
-           100.0 * (double)total_dec_verify_enc / (double)total_cycles, (unsigned long)total_dec_verify_enc);
-    printf("  4. Shuffle Proving:            %5.2f%% (%lu cycles)\n",
-           100.0 * (double)total_shuffle_prove / (double)total_cycles, (unsigned long)total_shuffle_prove);
-    printf("  5. Shuffle Verification:       %5.2f%% (%lu cycles)\n",
-           100.0 * (double)total_shuffle_verify / (double)total_cycles, (unsigned long)total_shuffle_verify);
+    printf("Total protocol execution cost: %llu cycles\n", (unsigned long long)total_cycles);
+    printf("  1. Setup Phase:                %5.2f%% (%llu cycles)\n",
+           100.0 * (double)(end_setup - start_setup) / (double)total_cycles, (unsigned long long)(end_setup - start_setup));
+    printf("  2. Casting Phase:              %5.2f%% (%llu cycles)\n",
+           100.0 * (double)(end_casting - start_casting) / (double)total_cycles, (unsigned long long)(end_casting - start_casting));
+    printf("  3. Decrypt & Verify ZK Enc:    %5.2f%% (%llu cycles)\n",
+           100.0 * (double)total_dec_verify_enc / (double)total_cycles, (unsigned long long)total_dec_verify_enc);
+    printf("  4. Shuffle Proving:            %5.2f%% (%llu cycles)\n",
+           100.0 * (double)total_shuffle_prove / (double)total_cycles, (unsigned long long)total_shuffle_prove);
+    printf("  5. Shuffle Verification:       %5.2f%% (%llu cycles)\n",
+           100.0 * (double)total_shuffle_verify / (double)total_cycles, (unsigned long long)total_shuffle_verify);
     printf("=======================================================================\n\n");
 
     // Clean up

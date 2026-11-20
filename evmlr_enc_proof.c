@@ -467,8 +467,8 @@ void bench_layered_enc_proof(flint_rand_t state) {
                                            cipher, current_msg, L_max);
         uint64_t end_verify = cpucycles();
 
-        printf("Layer %ld (L_in = %ld): prove = %lu cycles, verify = %lu cycles, status = %s\n",
-               k_layers - j, L_in, (unsigned long)(end_prove - start_prove), (unsigned long)(end_verify - start_verify),
+        printf("Layer %ld (L_in = %ld): prove = %llu cycles, verify = %llu cycles, status = %s\n",
+               k_layers - j, L_in, (unsigned long long)(end_prove - start_prove), (unsigned long long)(end_verify - start_verify),
                valid ? "VALID" : "INVALID");
 
         // Serialize layer to prepare input for next level (if not the last one)
