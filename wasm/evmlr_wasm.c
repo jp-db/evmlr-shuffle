@@ -246,49 +246,126 @@ EMSCRIPTEN_KEEPALIVE evmlr_wasm_ballot *evmlr_wasm_import_ballot(const evmlr_was
     return b;
 }
 
+/* counting takes an array of submissions by value; the structs are copied
+ * shallowly, so the ballots keep owning their memory. */
+static evmlr_voting_submission_struct *ballot_array(evmlr_wasm_ballot **ballots, int n) {
+    evmlr_voting_submission_struct *subs = (evmlr_voting_submission_struct *) malloc(n * sizeof(*subs));
+
+    for (int i = 0; subs != NULL && i < n; i++) {
+        subs[i] = ballots[i]->sub[0];
+    }
+    return subs;
+}
+
+static void write_votes(uint32_t *out, nmod_poly_mat_t *results, slong counted) {
+    for (slong i = 0; i < counted; i++) {
+        out[i] = (uint32_t) nmod_poly_get_coeff_ui(nmod_poly_mat_entry(results[i], 0, 0), 0);
+        nmod_poly_mat_clear(results[i]);
+    }
+}
+
 /**
  * Runs the mixnet over @p n ballots (the last ballot of each voter counts):
  * every server checks the encryption proofs, decrypts its layer, shuffles and
  * proves the shuffle. Writes the constant coefficient of each decrypted vote
  * to @p out (room for @p n entries; the order is the shuffled one) and
  * returns how many votes were counted, or -1 without the secret keys.
+ *
+ * If @p transcript is non-NULL, it receives the encoded counting transcript
+ * (every server's shuffle statement and proof, for evmlr_wasm_verify_counting),
+ * malloc'ed, with its length in *transcript_len.
  */
 EMSCRIPTEN_KEEPALIVE int evmlr_wasm_count(evmlr_wasm_election *e, evmlr_wasm_ballot **ballots,
-                                          int n, uint32_t *out) {
+                                          int n, uint32_t *out,
+                                          uint8_t **transcript, uint32_t *transcript_len) {
     evmlr_voting_submission_struct *subs;
     nmod_poly_mat_t *results;
-    evmlr_shuffle_proof_t *proofs;
     slong counted;
 
-    if (e == NULL || !e->has_sk) {
+    if (transcript != NULL) {
+        *transcript = NULL;
+        *transcript_len = 0;
+    }
+    if (e == NULL || !e->has_sk || n < 0) {
         return -1;
     }
-    if (n < 1) {
+    if (n == 0) {
         return 0;
     }
-    /* counting takes an array of submissions by value; the structs are
-     * copied shallowly, so the ballots keep owning their memory. */
-    subs = (evmlr_voting_submission_struct *) malloc(n * sizeof(*subs));
+    subs = ballot_array(ballots, n);
     results = (nmod_poly_mat_t *) malloc(n * sizeof(*results));
-    proofs = (evmlr_shuffle_proof_t *) malloc(e->pp->k * sizeof(*proofs));
-    for (int i = 0; i < n; i++) {
-        subs[i] = ballots[i]->sub[0];
+    if (subs == NULL || results == NULL) {
+        free(subs);
+        free(results);
+        return -1;
     }
 
-    counted = evmlr_voting_counting(results, proofs, (const evmlr_voting_submission_t *) subs,
-                                    n, e->pp, e->sk, e->state);
+    if (transcript != NULL) {
+        evmlr_voting_transcript_t tr;
+        evmlr_buf_t b;
 
-    for (slong i = 0; i < counted; i++) {
-        out[i] = (uint32_t) nmod_poly_get_coeff_ui(nmod_poly_mat_entry(results[i], 0, 0), 0);
-        nmod_poly_mat_clear(results[i]);
-    }
-    if (counted > 0) {
-        for (slong j = 0; j < e->pp->k; j++) {
-            evmlr_proof_clear(proofs[j], e->pp->shuf_ctx);
+        counted = evmlr_voting_counting_transcript(results, tr, (const evmlr_voting_submission_t *) subs,
+                                                   n, e->pp, e->sk, e->state);
+        evmlr_buf_init(&b);
+        *transcript = buf_release(&b, evmlr_serialize_transcript(&b, tr, e->pp), transcript_len);
+        evmlr_voting_transcript_clear(tr);
+    } else {
+        evmlr_shuffle_proof_t *proofs = (evmlr_shuffle_proof_t *) malloc(e->pp->k * sizeof(*proofs));
+
+        counted = evmlr_voting_counting(results, proofs, (const evmlr_voting_submission_t *) subs,
+                                        n, e->pp, e->sk, e->state);
+        if (counted > 0) {
+            for (slong j = 0; j < e->pp->k; j++) {
+                evmlr_proof_clear(proofs[j], e->pp->shuf_ctx);
+            }
         }
+        free(proofs);
     }
-    free(proofs);
+    write_votes(out, results, counted);
     free(results);
     free(subs);
     return (int) counted;
+}
+
+/**
+ * Checks a counting transcript against the ballots, with the public
+ * parameters only (see evmlr_voting_verify_counting). On success writes the
+ * votes to @p out (room for @p n entries) and returns their number. Returns
+ * -1 if the count does not verify, with *status 0, or if the transcript does
+ * not decode, with its evmlr_ser_status_t in *status.
+ */
+EMSCRIPTEN_KEEPALIVE int evmlr_wasm_verify_counting(const evmlr_wasm_election *e, evmlr_wasm_ballot **ballots,
+                                                    int n, const uint8_t *transcript, uint32_t transcript_len,
+                                                    uint32_t *out, int *status) {
+    evmlr_voting_submission_struct *subs;
+    evmlr_voting_transcript_t tr;
+    nmod_poly_mat_t *results;
+    slong verified;
+
+    *status = EVMLR_SER_OK;
+    if (e == NULL || n < 0) {
+        *status = EVMLR_SER_ERR_ARG;
+        return -1;
+    }
+    *status = evmlr_deserialize_transcript(tr, e->pp, transcript, transcript_len);
+    if (*status != EVMLR_SER_OK) {
+        return -1;
+    }
+    subs = ballot_array(ballots, n > 0 ? n : 0);
+    results = (nmod_poly_mat_t *) malloc((n > 0 ? n : 1) * sizeof(*results));
+    if ((n > 0 && subs == NULL) || results == NULL) {
+        free(subs);
+        free(results);
+        evmlr_voting_transcript_clear(tr);
+        *status = EVMLR_SER_ERR_NOMEM;
+        return -1;
+    }
+    verified = evmlr_voting_verify_counting(results, tr, (const evmlr_voting_submission_t *) subs, n, e->pp);
+    if (verified > 0) {
+        write_votes(out, results, verified);
+    }
+    free(results);
+    free(subs);
+    evmlr_voting_transcript_clear(tr);
+    return (int) verified;
 }

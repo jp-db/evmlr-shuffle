@@ -26,6 +26,7 @@ The outputs:
 | --- | --- |
 | `wasm/build/evmlr.mjs` + `evmlr.wasm` | ES module factory (`createEvmlrModule`), for browsers, workers and Node |
 | `wasm/evmlr.mjs` | JS wrapper, see below |
+| `wasm/demo.mjs` | authority, voters, counter and auditor exchanging only bytes (`make -f Makefile.wasm demo`) |
 | `wasm/build/evmlr_*.js` | the test/benchmark binaries; `node wasm/build/evmlr_voting.js test` |
 
 The module uses neither WASM SIMD nor threads, so it runs on every engine and
@@ -48,10 +49,15 @@ const election = evmlr.importParams(ppBytes);
 const ballot = election.cast(voterId, [candidate]);
 const ballotBytes = ballot.toBytes();        // send to the bulletin board
 
-// Counting
+// Counting: the tally, and a transcript of every server's proof of shuffle
 const counter = evmlr.importParams(ppBytes);
 counter.importKeys(skBytes);
-const tally = counter.count(ballots.map((b) => counter.importBallot(b)));
+const { tally, transcript } =
+  counter.countWithTranscript(ballots.map((b) => counter.importBallot(b)));
+
+// Anyone: check the count from public data (parameters, ballots, transcript)
+const auditor = evmlr.importParams(ppBytes);
+const verified = auditor.verifyCounting(ballots.map((b) => auditor.importBallot(b)), transcript);
 ```
 
 All bytes are `Uint8Array`s in the format below, so they move freely between
@@ -62,8 +68,8 @@ on elections and ballots when you are done with them.
 ## Serialization format
 
 `evmlr_serialize.h` (also used natively) encodes the public parameters, the
-secret keys, ballots with their proofs of correct encryption, and proofs of
-shuffle with their statements. Every encoding has:
+secret keys, ballots with their proofs of correct encryption, proofs of
+shuffle with their statements, and counting transcripts. Every encoding has:
 
 - a 20-byte header: magic, format version, object type, and a fingerprint of
   the scheme parameters (`MOD_Q`, `DEGREE_N`, `K_LWE`, ...), so bytes from a
@@ -78,17 +84,38 @@ Fiat-Shamir transcripts like the original. A truncated, padded or tampered
 ballot is refused before any proof is checked.
 
 The public parameters carry only what is sampled: `H`, the random block
-`H''` of `H' = (H'' | I)`, the servers' public keys and the commitment
-matrices. Everything else is rebuilt from the parameters.
+`H''` of `H' = (H'' | I)` and the servers' public keys. Everything else is
+rebuilt on import, including the shuffle's commitment key (see below).
 
-Sizes with the default parameters: about 385 KiB of public parameters and a
-54 KB ballot for 2 servers; about 575 KiB and a 100 KB ballot for 3.
+Sizes with the default parameters, for 3 servers: 28 KB of public
+parameters, 100 KB per ballot, and a transcript of about 2.1 MB for 5 counted
+ballots. The transcript grows linearly with the number of ballots.
 
-Counting re-creates the commitment key of the shuffle (`pp->shuf_ctx`) for
-the number of ballots it counts. So to check proofs of shuffle elsewhere,
-export the public parameters after counting. `evmlr_voting_counting` does not
-yet output the shuffle statements, so the proofs of shuffle it produces can
-be encoded but not yet checked by a third party.
+### Verifiable counting
+
+`evmlr_voting_counting_transcript` counts like `evmlr_voting_counting` and
+also returns, for every server, the statement its shuffle proves (the
+commitment `D`, the outputs `c_hat`, the inputs `c_star`) and the proof.
+`evmlr_voting_verify_counting` checks such a transcript with public data
+only:
+
+- applying the revote policy to the ballots gives the number of ballots the
+  transcript counted;
+- server 0's inputs are the OTSE ciphertexts of those ballots' outer layers,
+  in order;
+- server j's inputs, for j > 0, are the ciphertexts server j − 1 output;
+- every proof of shuffle verifies.
+
+It returns the tally the last server's outputs hold. It does not show that
+the servers decrypted correctly; that proof is not implemented yet (see the
+top-level README).
+
+The commitment key of the shuffle is expanded from a SHA-256 hash of the
+public parameters and the number of ballots, with the AES-256-CTR stream.
+Before, the counting servers sampled it, and they are the provers of the
+shuffle. A prover who chooses the commitment key can choose one with a
+trapdoor, which breaks binding and so the soundness of the proof. Now
+nobody chooses the key, and every verifier recomputes the same one.
 
 ## What changes for WebAssembly
 

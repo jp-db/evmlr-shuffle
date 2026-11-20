@@ -23,6 +23,10 @@ typedef evmlr_hpke_cipher_struct evmlr_hpke_cipher_t[1];
 
 void evmlr_hpke_ctx_init(evmlr_hpke_ctx_t ctx, slong L, flint_rand_t state);
 
+// Allocates a context of length L without sampling (see evmlr_otse_ctx_init_empty).
+void evmlr_hpke_ctx_init_empty(evmlr_hpke_ctx_t ctx, slong L);
+// Initialises dst as a copy of src.
+void evmlr_hpke_ctx_init_copy(evmlr_hpke_ctx_t dst, const evmlr_hpke_ctx_t src);
 void evmlr_hpke_ctx_clear(evmlr_hpke_ctx_t ctx);
 
 void evmlr_hpke_keypair_gen(evmlr_hpke_keypair_t keypair, flint_rand_t state, const evmlr_hpke_ctx_t ctx);

@@ -9,6 +9,17 @@ void evmlr_hpke_ctx_init(evmlr_hpke_ctx_t ctx, slong L, flint_rand_t state) {
     evmlr_otse_ctx_init(ctx->otse_ctx, L, state);
 }
 
+void evmlr_hpke_ctx_init_empty(evmlr_hpke_ctx_t ctx, slong L) {
+    evmlr_mlpke_ctx_init(ctx->enc_ctx);
+    evmlr_otse_ctx_init_empty(ctx->otse_ctx, L);
+}
+
+void evmlr_hpke_ctx_init_copy(evmlr_hpke_ctx_t dst, const evmlr_hpke_ctx_t src) {
+    evmlr_hpke_ctx_init_empty(dst, src->otse_ctx->L);
+    nmod_poly_mat_set(dst->otse_ctx->H, src->otse_ctx->H);
+    nmod_poly_mat_set(dst->otse_ctx->H_prime, src->otse_ctx->H_prime);
+}
+
 void evmlr_hpke_ctx_clear(evmlr_hpke_ctx_t ctx) {
     evmlr_mlpke_ctx_clear(ctx->enc_ctx);
     evmlr_otse_ctx_clear(ctx->otse_ctx);

@@ -20,6 +20,21 @@ void evmlr_shuffle_ctx_init(evmlr_shuffle_ctx_t ctx, slong N, slong L, flint_ran
     ctx->L = L;
 }
 
+slong evmlr_shuffle_com_len(slong N, slong L) {
+    return N * (LOG_Q_CEIL > (2*ETA) * (K_LWE + L)
+            ? LOG_Q_CEIL
+            : (2*ETA) * (K_LWE + L));
+}
+
+void evmlr_shuffle_ctx_init_seeded(evmlr_shuffle_ctx_t ctx, slong N, const evmlr_hpke_ctx_t hpke, const uint8_t seed[32]) {
+    slong L = hpke->otse_ctx->L;
+
+    evmlr_commit_ctx_init_seeded(ctx->com_ctx, evmlr_shuffle_com_len(N, L), seed);
+    evmlr_hpke_ctx_init_copy(ctx->hpke_ctx, hpke);
+    ctx->N = N;
+    ctx->L = L;
+}
+
 void evmlr_shuffle_ctx_clear(evmlr_shuffle_ctx_t ctx) {
     evmlr_commit_ctx_clear(ctx->com_ctx);
     evmlr_hpke_ctx_clear(ctx->hpke_ctx);

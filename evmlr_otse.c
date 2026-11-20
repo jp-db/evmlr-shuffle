@@ -37,6 +37,18 @@ void evmlr_otse_ctx_init(evmlr_otse_ctx_t ctx, slong L, flint_rand_t state) {
     nmod_poly_set_coeff_ui(ctx->cyclo_poly, 0, 1);
 }
 
+void evmlr_otse_ctx_init_empty(evmlr_otse_ctx_t ctx, slong L) {
+    ctx->L = L;
+    nmod_poly_mat_init(ctx->H, K_LWE + L, K_LWR, 1UL << ZETA);
+    nmod_poly_mat_init(ctx->H_prime, L, K_LWE + L, MOD_Q);
+    for (slong i = 0; i < L; i++) {
+        nmod_poly_one(nmod_poly_mat_entry(ctx->H_prime, i, K_LWE + i));
+    }
+    nmod_poly_init(ctx->cyclo_poly, MOD_Q);
+    nmod_poly_set_coeff_ui(ctx->cyclo_poly, DEGREE_N, 1);
+    nmod_poly_set_coeff_ui(ctx->cyclo_poly, 0, 1);
+}
+
 void evmlr_otse_ctx_clear(evmlr_otse_ctx_t ctx) {
     nmod_poly_mat_clear(ctx->H);
     nmod_poly_mat_clear(ctx->H_prime);

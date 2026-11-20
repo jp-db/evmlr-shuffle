@@ -63,6 +63,38 @@ slong evmlr_voting_counting(nmod_poly_mat_t* results, evmlr_shuffle_proof_t* shu
                           const evmlr_voting_submission_t* submissions, slong num_submissions,
                           const evmlr_voting_pp_t pp, const evmlr_voting_sk_t sk, flint_rand_t state);
 
+// The shuffle context of a count of N ballots. Its commitment key is
+// expanded from a hash of pp and N, so every party derives the same one.
+void evmlr_voting_shuffle_ctx_init(evmlr_shuffle_ctx_t ctx, const evmlr_voting_pp_t pp, slong N);
+
+// What counting publishes so anyone can check the mixing: for each server j,
+// the statement its shuffle proves (D, c_hat, c_star) and the proof.
+typedef struct {
+    slong k;                            // number of servers
+    slong N;                            // ballots counted, after the revote policy
+    evmlr_shuffle_pp_t* statements;     // k statements; NULL when N == 0
+    evmlr_shuffle_proof_t* proofs;      // k proofs; NULL when N == 0
+} evmlr_voting_transcript_struct;
+typedef evmlr_voting_transcript_struct evmlr_voting_transcript_t[1];
+
+// counting, but returning the shuffle statements and proofs in tr, which the
+// caller clears with evmlr_voting_transcript_clear.
+slong evmlr_voting_counting_transcript(nmod_poly_mat_t* results, evmlr_voting_transcript_t tr,
+                                       const evmlr_voting_submission_t* submissions, slong num_submissions,
+                                       const evmlr_voting_pp_t pp, const evmlr_voting_sk_t sk, flint_rand_t state);
+
+// Checks a count without any secret: the revote policy gives as many ballots
+// as tr counted; server 0 shuffled the ballots' outer OTSE ciphertexts; each
+// server j > 0 shuffled what server j - 1 output; and every proof of shuffle
+// verifies under the derived commitment key. Returns the number of votes and,
+// if results is non-NULL, initialises results[0..N-1] with them (in the
+// published order); returns -1, leaving results alone, if anything fails.
+// Correct decryption by the servers is not proven yet (see the README).
+slong evmlr_voting_verify_counting(nmod_poly_mat_t* results, const evmlr_voting_transcript_t tr,
+                                   const evmlr_voting_submission_t* submissions, slong num_submissions,
+                                   const evmlr_voting_pp_t pp);
+void evmlr_voting_transcript_clear(evmlr_voting_transcript_t tr);
+
 // Memory Management
 void evmlr_voting_pp_clear(evmlr_voting_pp_t pp);
 void evmlr_voting_sk_clear(evmlr_voting_sk_t sk);

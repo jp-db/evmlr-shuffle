@@ -390,50 +390,11 @@ static void get_bin_proof(reader_t *r, evmlr_bin_proof_struct *p) {
 }
 
 /* ---------------------------------------------------------------------------
- * Contexts without sampling
- *
- * The *_ctx_init functions sample their matrices; on import the matrices come
- * from the input instead. These mirror those functions' allocations and
- * fixed parts (keep them in sync with evmlr_otse_ctx_init,
- * evmlr_commit_ctx_init and evmlr_shuffle_ctx_init).
+ * Sizes fixed by the protocol
  * ------------------------------------------------------------------------- */
-
-static void set_cyclo(nmod_poly_t cyclo) {
-    nmod_poly_init(cyclo, MOD_Q);
-    nmod_poly_set_coeff_ui(cyclo, DEGREE_N, 1);
-    nmod_poly_set_coeff_ui(cyclo, 0, 1);
-}
-
-static void hpke_ctx_init_empty(evmlr_hpke_ctx_t ctx, slong L) {
-    evmlr_otse_ctx_struct *otse = ctx->otse_ctx;
-
-    evmlr_mlpke_ctx_init(ctx->enc_ctx);
-    otse->L = L;
-    nmod_poly_mat_init(otse->H, K_LWE + L, K_LWR, 1UL << ZETA);
-    /* H' = (H'' | I_L); only H'' is encoded. */
-    nmod_poly_mat_init(otse->H_prime, L, K_LWE + L, MOD_Q);
-    for (slong i = 0; i < L; i++) {
-        nmod_poly_one(nmod_poly_mat_entry(otse->H_prime, i, K_LWE + i));
-    }
-    set_cyclo(otse->cyclo_poly);
-}
-
-static void commit_ctx_init_empty(evmlr_commit_ctx_t ctx, slong N) {
-    ctx->b_sqr = compute_b(N);
-    ctx->N = N;
-    nmod_poly_mat_init(ctx->A_1, K_SIS, N, MOD_Q);
-    nmod_poly_mat_init(ctx->A_2, K_SIS, 2 * K_SIS, MOD_Q);
-    set_cyclo(ctx->cyclo_poly);
-}
 
 static uint64_t voting_L_max(uint64_t k) {
     return (k - 1) * K_LWR * (K_LWE + 1) + 1;
-}
-
-static uint64_t shuffle_com_N(uint64_t N, uint64_t L) {
-    uint64_t row = (uint64_t) (2 * ETA) * (K_LWE + L);
-
-    return N * (LOG_Q_CEIL > row ? LOG_Q_CEIL : row);
 }
 
 /* ---------------------------------------------------------------------------
@@ -447,7 +408,7 @@ int evmlr_serialize_pp(evmlr_buf_t *out, const evmlr_voting_pp_t pp) {
 
     if (pp->k < 1 || pp->L_max != (slong) voting_L_max((uint64_t) pp->k) || otse->L != pp->L_max
         || shuf->L != pp->L_max
-        || shuf->com_ctx->N != (slong) shuffle_com_N((uint64_t) shuf->N, (uint64_t) shuf->L)) {
+        || shuf->com_ctx->N != evmlr_shuffle_com_len(shuf->N, shuf->L)) {
         return EVMLR_SER_ERR_ARG;
     }
     put_header(&w, EVMLR_SER_PP);
@@ -459,14 +420,14 @@ int evmlr_serialize_pp(evmlr_buf_t *out, const evmlr_voting_pp_t pp) {
         put_mat(&w, pp->pks[j]->A);
         put_mat(&w, pp->pks[j]->t);
     }
-    put_mat(&w, shuf->com_ctx->A_1);
-    put_mat(&w, shuf->com_ctx->A_2);
+    /* The shuffle's commitment key is derived from the rest (see
+     * evmlr_voting_shuffle_ctx_init), so it is not encoded. */
     return w.err;
 }
 
 int evmlr_deserialize_pp(evmlr_voting_pp_t pp, const uint8_t *in, size_t len) {
     reader_t r = open_reader(in, len, EVMLR_SER_PP);
-    uint64_t k, N, L, com_N, polys;
+    uint64_t k, N, L, polys;
     evmlr_mlpke_pk_t *pks;
 
     k = get_u32(&r);
@@ -478,10 +439,8 @@ int evmlr_deserialize_pp(evmlr_voting_pp_t pp, const uint8_t *in, size_t len) {
         return EVMLR_SER_ERR_SHAPE;
     }
     L = voting_L_max(k);
-    com_N = shuffle_com_N(N, L);
     /* Every polynomial takes at least its 2-byte length. */
-    polys = (K_LWE + L) * K_LWR + L * K_LWE + k * (K_LWE * K_LWE + K_LWE)
-            + K_SIS * com_N + K_SIS * 2 * K_SIS;
+    polys = (K_LWE + L) * K_LWR + L * K_LWE + k * (K_LWE * K_LWE + K_LWE);
     if (polys > r.left / 2) {
         return EVMLR_SER_ERR_TRUNCATED;
     }
@@ -493,32 +452,29 @@ int evmlr_deserialize_pp(evmlr_voting_pp_t pp, const uint8_t *in, size_t len) {
     pp->k = (slong) k;
     pp->L_max = (slong) L;
     pp->pks = pks;
-    hpke_ctx_init_empty(pp->hpke_ctx, (slong) L);
-    commit_ctx_init_empty(pp->shuf_ctx->com_ctx, (slong) com_N);
-    hpke_ctx_init_empty(pp->shuf_ctx->hpke_ctx, (slong) L);
-    pp->shuf_ctx->N = (slong) N;
-    pp->shuf_ctx->L = (slong) L;
+    evmlr_hpke_ctx_init_empty(pp->hpke_ctx, (slong) L);
     for (uint64_t j = 0; j < k; j++) {
         nmod_poly_mat_init(pks[j]->A, K_LWE, K_LWE, MOD_Q);
         nmod_poly_mat_init(pks[j]->t, K_LWE, 1, MOD_Q);
     }
 
     get_mat(&r, pp->hpke_ctx->otse_ctx->H);
+    /* H' = (H'' | I_L); only H'' is encoded. */
     get_mat_block(&r, pp->hpke_ctx->otse_ctx->H_prime, 0, 0, (slong) L, K_LWE);
     for (uint64_t j = 0; j < k && !r.err; j++) {
         get_mat(&r, pks[j]->A);
         get_mat(&r, pks[j]->t);
     }
-    get_mat(&r, pp->shuf_ctx->com_ctx->A_1);
-    get_mat(&r, pp->shuf_ctx->com_ctx->A_2);
-
     if (close_reader(&r)) {
-        evmlr_voting_pp_clear(pp);
+        for (uint64_t j = 0; j < k; j++) {
+            nmod_poly_mat_clear(pks[j]->A);
+            nmod_poly_mat_clear(pks[j]->t);
+        }
+        free(pks);
+        evmlr_hpke_ctx_clear(pp->hpke_ctx);
         return r.err;
     }
-    /* The shuffle runs over the same OTSE matrices (see sync_hpke_ctx). */
-    nmod_poly_mat_set(pp->shuf_ctx->hpke_ctx->otse_ctx->H, pp->hpke_ctx->otse_ctx->H);
-    nmod_poly_mat_set(pp->shuf_ctx->hpke_ctx->otse_ctx->H_prime, pp->hpke_ctx->otse_ctx->H_prime);
+    evmlr_voting_shuffle_ctx_init(pp->shuf_ctx, pp, (slong) N);
     return EVMLR_SER_OK;
 }
 
@@ -631,8 +587,98 @@ int evmlr_deserialize_submission(evmlr_voting_submission_t sub, const evmlr_voti
 }
 
 /* ---------------------------------------------------------------------------
- * Shuffle proofs and statements
+ * Shuffle proofs, statements and counting transcripts
  * ------------------------------------------------------------------------- */
+
+static void put_statement(writer_t *w, const evmlr_shuffle_pp_struct *stmt, slong N) {
+    put_mat(w, stmt->D->c);
+    for (slong i = 0; i < N; i++) {
+        put_mat(w, stmt->c_hat[i]);
+        put_mat(w, stmt->c_star[i]->c);
+    }
+}
+
+/* Allocates stmt for ctx's dimensions and reads it; frees it again on
+ * failure. Returns r->err. */
+static int read_statement(reader_t *r, evmlr_shuffle_pp_struct *stmt, const evmlr_shuffle_ctx_struct *ctx) {
+    const slong n = ctx->N;
+
+    if (r->err) {
+        return r->err;
+    }
+    stmt->c_hat = (nmod_poly_mat_t *) malloc((size_t) n * sizeof(nmod_poly_mat_t));
+    stmt->c_star = (evmlr_otse_ciphertext_t *) malloc((size_t) n * sizeof(evmlr_otse_ciphertext_t));
+    if (stmt->c_hat == NULL || stmt->c_star == NULL) {
+        free(stmt->c_hat);
+        free(stmt->c_star);
+        return r->err = EVMLR_SER_ERR_NOMEM;
+    }
+    evmlr_commit_init(stmt->D);
+    for (slong i = 0; i < n; i++) {
+        nmod_poly_mat_init(stmt->c_hat[i], ctx->L, 1, MOD_Q);
+        evmlr_otse_ciphertext_init(stmt->c_star[i], ctx->L);
+    }
+    get_mat(r, stmt->D->c);
+    for (slong i = 0; i < n && !r->err; i++) {
+        get_mat(r, stmt->c_hat[i]);
+        get_mat(r, stmt->c_star[i]->c);
+    }
+    if (r->err) {
+        evmlr_shuffle_pp_clear(stmt, ctx);
+    }
+    return r->err;
+}
+
+static void put_shuffle_proof(writer_t *w, const evmlr_shuffle_proof_struct *proof) {
+    put_mat(w, proof->u);
+    put_mat(w, proof->P->c);
+    put_mat(w, proof->W->c);
+    put_bin_proof(w, proof->proof_D);
+    put_bin_proof(w, proof->proof_P);
+    put_bin_proof(w, proof->proof_W);
+    put_lin_proof(w, proof->proof_u);
+}
+
+static int read_shuffle_proof(reader_t *r, evmlr_shuffle_proof_struct *proof, const evmlr_shuffle_ctx_struct *ctx) {
+    if (r->err) {
+        return r->err;
+    }
+    /* evmlr_proof_init leaves P and W to the prover; prove initialises them. */
+    evmlr_proof_init(proof, ctx);
+    evmlr_commit_init(proof->P);
+    evmlr_commit_init(proof->W);
+    get_mat(r, proof->u);
+    get_mat(r, proof->P->c);
+    get_mat(r, proof->W->c);
+    get_bin_proof(r, proof->proof_D);
+    get_bin_proof(r, proof->proof_P);
+    get_bin_proof(r, proof->proof_W);
+    get_lin_proof(r, proof->proof_u);
+    if (r->err) {
+        evmlr_proof_clear(proof, ctx);
+    }
+    return r->err;
+}
+
+/* The dimensions of a shuffle of N messages of length L, without the
+ * matrices: what proof_init, statements and the clear functions read. */
+static void shape_ctx(evmlr_shuffle_ctx_struct *shape, slong N, slong L) {
+    memset(shape, 0, sizeof(*shape));
+    shape->N = N;
+    shape->L = L;
+    shape->com_ctx->N = evmlr_shuffle_com_len(N, L);
+}
+
+/* How many polynomials a statement and a proof for N messages of length L
+ * hold; each takes at least two bytes of input. */
+static uint64_t shuffle_polys(uint64_t N, uint64_t L) {
+    const uint64_t com_N = (uint64_t) evmlr_shuffle_com_len((slong) N, (slong) L);
+    const uint64_t bin = 5 * K_SIS + 4 + com_N + 3 * 2 * K_SIS;
+    const uint64_t lin = 2 * N + N * (LOG_Q_CEIL + 1 + 2 * ETA * (K_LWE + L));
+
+    return K_SIS + 2 * N * L                     /* statement */
+         + (N - 1) + 2 * K_SIS + 3 * bin + lin;  /* proof */
+}
 
 int evmlr_serialize_shuffle_proof(evmlr_buf_t *out, const evmlr_shuffle_proof_t proof,
                                   const evmlr_shuffle_ctx_t ctx) {
@@ -640,13 +686,7 @@ int evmlr_serialize_shuffle_proof(evmlr_buf_t *out, const evmlr_shuffle_proof_t 
 
     put_header(&w, EVMLR_SER_SHUFFLE_PROOF);
     put_u32(&w, (uint64_t) ctx->N);
-    put_mat(&w, proof->u);
-    put_mat(&w, proof->P->c);
-    put_mat(&w, proof->W->c);
-    put_bin_proof(&w, proof->proof_D);
-    put_bin_proof(&w, proof->proof_P);
-    put_bin_proof(&w, proof->proof_W);
-    put_lin_proof(&w, proof->proof_u);
+    put_shuffle_proof(&w, proof);
     return w.err;
 }
 
@@ -661,20 +701,10 @@ int evmlr_deserialize_shuffle_proof(evmlr_shuffle_proof_t proof, const evmlr_shu
     if (N != (uint64_t) ctx->N) {
         return EVMLR_SER_ERR_SHAPE;
     }
-    /* evmlr_proof_init leaves P and W to the prover; prove initialises them. */
-    evmlr_proof_init(proof, ctx);
-    evmlr_commit_init(proof->P);
-    evmlr_commit_init(proof->W);
-
-    get_mat(&r, proof->u);
-    get_mat(&r, proof->P->c);
-    get_mat(&r, proof->W->c);
-    get_bin_proof(&r, proof->proof_D);
-    get_bin_proof(&r, proof->proof_P);
-    get_bin_proof(&r, proof->proof_W);
-    get_lin_proof(&r, proof->proof_u);
-    if (close_reader(&r)) {
-        evmlr_proof_clear(proof, ctx);
+    if (read_shuffle_proof(&r, proof, ctx) || close_reader(&r)) {
+        if (r.err == EVMLR_SER_ERR_TRAILING) {
+            evmlr_proof_clear(proof, ctx);
+        }
         return r.err;
     }
     return EVMLR_SER_OK;
@@ -686,11 +716,7 @@ int evmlr_serialize_shuffle_statement(evmlr_buf_t *out, const evmlr_shuffle_pp_t
 
     put_header(&w, EVMLR_SER_SHUFFLE_STMT);
     put_u32(&w, (uint64_t) ctx->N);
-    put_mat(&w, stmt->D->c);
-    for (slong i = 0; i < ctx->N; i++) {
-        put_mat(&w, stmt->c_hat[i]);
-        put_mat(&w, stmt->c_star[i]->c);
-    }
+    put_statement(&w, stmt, ctx->N);
     return w.err;
 }
 
@@ -698,7 +724,6 @@ int evmlr_deserialize_shuffle_statement(evmlr_shuffle_pp_t stmt, const evmlr_shu
                                         const uint8_t *in, size_t len) {
     reader_t r = open_reader(in, len, EVMLR_SER_SHUFFLE_STMT);
     uint64_t N = get_u32(&r);
-    slong n;
 
     if (r.err) {
         return r.err;
@@ -706,27 +731,92 @@ int evmlr_deserialize_shuffle_statement(evmlr_shuffle_pp_t stmt, const evmlr_shu
     if (N != (uint64_t) ctx->N) {
         return EVMLR_SER_ERR_SHAPE;
     }
-    n = ctx->N;
-    stmt->c_hat = (nmod_poly_mat_t *) malloc((size_t) n * sizeof(nmod_poly_mat_t));
-    stmt->c_star = (evmlr_otse_ciphertext_t *) malloc((size_t) n * sizeof(evmlr_otse_ciphertext_t));
-    if (stmt->c_hat == NULL || stmt->c_star == NULL) {
-        free(stmt->c_hat);
-        free(stmt->c_star);
+    if (read_statement(&r, stmt, ctx) || close_reader(&r)) {
+        if (r.err == EVMLR_SER_ERR_TRAILING) {
+            evmlr_shuffle_pp_clear(stmt, ctx);
+        }
+        return r.err;
+    }
+    return EVMLR_SER_OK;
+}
+
+int evmlr_serialize_transcript(evmlr_buf_t *out, const evmlr_voting_transcript_t tr,
+                               const evmlr_voting_pp_t pp) {
+    writer_t w = { out, 0 };
+
+    if (tr->k != pp->k || tr->N < 0 || (tr->N > 0 && (tr->statements == NULL || tr->proofs == NULL))) {
+        return EVMLR_SER_ERR_ARG;
+    }
+    put_header(&w, EVMLR_SER_TRANSCRIPT);
+    put_u32(&w, (uint64_t) tr->k);
+    put_u32(&w, (uint64_t) tr->N);
+    for (slong j = 0; j < tr->k && tr->N > 0; j++) {
+        put_statement(&w, tr->statements[j], tr->N);
+        put_shuffle_proof(&w, tr->proofs[j]);
+    }
+    return w.err;
+}
+
+int evmlr_deserialize_transcript(evmlr_voting_transcript_t tr, const evmlr_voting_pp_t pp,
+                                 const uint8_t *in, size_t len) {
+    reader_t r = open_reader(in, len, EVMLR_SER_TRANSCRIPT);
+    evmlr_shuffle_ctx_struct shape;
+    uint64_t k, N;
+    slong done = 0;
+
+    k = get_u32(&r);
+    N = get_u32(&r);
+    if (r.err) {
+        return r.err;
+    }
+    if (k != (uint64_t) pp->k) {
+        return EVMLR_SER_ERR_SHAPE;
+    }
+    if (N > MAX_MESSAGES) {
+        return EVMLR_SER_ERR_SHAPE;
+    }
+    tr->k = (slong) k;
+    tr->N = (slong) N;
+    tr->statements = NULL;
+    tr->proofs = NULL;
+    if (N == 0) {
+        return close_reader(&r);
+    }
+    if (k * shuffle_polys(N, (uint64_t) pp->L_max) > r.left / 2) {
+        return EVMLR_SER_ERR_TRUNCATED;
+    }
+    tr->statements = (evmlr_shuffle_pp_t *) malloc((size_t) k * sizeof(evmlr_shuffle_pp_t));
+    tr->proofs = (evmlr_shuffle_proof_t *) malloc((size_t) k * sizeof(evmlr_shuffle_proof_t));
+    if (tr->statements == NULL || tr->proofs == NULL) {
+        free(tr->statements);
+        free(tr->proofs);
         return EVMLR_SER_ERR_NOMEM;
     }
-    evmlr_commit_init(stmt->D);
-    for (slong i = 0; i < n; i++) {
-        nmod_poly_mat_init(stmt->c_hat[i], ctx->L, 1, MOD_Q);
-        evmlr_otse_ciphertext_init(stmt->c_star[i], ctx->L);
+    shape_ctx(&shape, (slong) N, pp->L_max);
+    for (; done < (slong) k; done++) {
+        if (read_statement(&r, tr->statements[done], &shape)) {
+            break;
+        }
+        if (read_shuffle_proof(&r, tr->proofs[done], &shape)) {
+            evmlr_shuffle_pp_clear(tr->statements[done], &shape);
+            break;
+        }
     }
-
-    get_mat(&r, stmt->D->c);
-    for (slong i = 0; i < n && !r.err; i++) {
-        get_mat(&r, stmt->c_hat[i]);
-        get_mat(&r, stmt->c_star[i]->c);
+    if (!r.err) {
+        close_reader(&r);
     }
-    if (close_reader(&r)) {
-        evmlr_shuffle_pp_clear(stmt, ctx);
+    if (r.err) {
+        /* Servers [0, done) were read completely; done is the one that failed
+         * (and freed itself), or k if only the trailing check failed. */
+        for (slong j = 0; j < done; j++) {
+            evmlr_shuffle_pp_clear(tr->statements[j], &shape);
+            evmlr_proof_clear(tr->proofs[j], &shape);
+        }
+        free(tr->statements);
+        free(tr->proofs);
+        tr->statements = NULL;
+        tr->proofs = NULL;
+        tr->N = 0;
         return r.err;
     }
     return EVMLR_SER_OK;
@@ -989,24 +1079,68 @@ static void test(flint_rand_t state) {
         TEST_ASSERT(ok_rt && ok_ver && ok_bad, end);
     } TEST_END;
 
-    TEST_ONCE("imported ballots are counted under imported keys") {
-        nmod_poly_mat_t results[3];
-        evmlr_shuffle_proof_t shuffle_proofs[2];
-        slong counted = evmlr_voting_counting(results, shuffle_proofs, (const evmlr_voting_submission_t *) subs2,
-                                              n_voters, pp2, sk2, state);
-        int seen[3] = { 0, 0, 0 }, ok = (counted == n_voters);
+    TEST_ONCE("imported ballots are counted, and the transcript verifies") {
+        nmod_poly_mat_t results[3], checked[3];
+        evmlr_voting_transcript_t tr, tr2;
+        evmlr_voting_submission_struct some[3];
+        evmlr_buf_t b_tr, b_tr2;
+        slong counted, verified = -1, n_checked = 0;
+        int seen[3] = { 0, 0, 0 }, ok, same = 1, ok_rt, bad_stmt, bad_missing, bad_order, bad_trunc;
 
+        counted = evmlr_voting_counting_transcript(results, tr, (const evmlr_voting_submission_t *) subs2,
+                                                   n_voters, pp2, sk2, state);
+        ok = (counted == n_voters);
         for (slong i = 0; i < counted; i++) {
             ulong v = nmod_poly_get_coeff_ui(nmod_poly_mat_entry(results[i], 0, 0), 0);
             for (int j = 0; j < 3; j++) {
                 if (v == votes[j]) seen[j]++;
             }
+        }
+        ok = ok && seen[0] == 1 && seen[1] == 1 && seen[2] == 1;
+
+        /* A third party: the public parameters, the ballots and the
+         * transcript, all from bytes. */
+        ok_rt = ENCODE(b_tr, evmlr_serialize_transcript(&b_tr, tr, pp2))
+             && evmlr_deserialize_transcript(tr2, pp, b_tr.data, b_tr.len) == EVMLR_SER_OK
+             && ENCODE(b_tr2, evmlr_serialize_transcript(&b_tr2, tr2, pp))
+             && same_bytes(&b_tr, &b_tr2);
+        if (ok_rt) {
+            verified = evmlr_voting_verify_counting(checked, tr2, (const evmlr_voting_submission_t *) subs2, n_voters, pp);
+            n_checked = verified > 0 ? verified : 0;
+            for (slong i = 0; i < n_checked && i < counted; i++) {
+                same &= nmod_poly_mat_equal(checked[i], results[i]);
+            }
+
+            /* Ballots missing, or in another order than the one shuffled. */
+            some[0] = subs2[0][0];
+            some[1] = subs2[1][0];
+            bad_missing = evmlr_voting_verify_counting(NULL, tr2, (const evmlr_voting_submission_t *) some, 2, pp) == -1;
+            some[0] = subs2[1][0];
+            some[1] = subs2[0][0];
+            some[2] = subs2[2][0];
+            bad_order = evmlr_voting_verify_counting(NULL, tr2, (const evmlr_voting_submission_t *) some, 3, pp) == -1;
+
+            /* One output of the first server changed. */
+            nmod_poly_struct *c = nmod_poly_mat_entry(tr2->statements[0]->c_hat[0], 0, 0);
+            nmod_poly_set_coeff_ui(c, 0, (nmod_poly_get_coeff_ui(c, 0) + 1) % MOD_Q);
+            bad_stmt = evmlr_voting_verify_counting(NULL, tr2, (const evmlr_voting_submission_t *) subs2, n_voters, pp) == -1;
+            evmlr_voting_transcript_clear(tr2);
+
+            bad_trunc = evmlr_deserialize_transcript(tr2, pp, b_tr.data, b_tr.len - 1) == EVMLR_SER_ERR_TRUNCATED;
+        } else {
+            bad_stmt = bad_missing = bad_order = bad_trunc = 0;
+        }
+        evmlr_buf_clear(&b_tr);
+        evmlr_buf_clear(&b_tr2);
+        for (slong i = 0; i < counted; i++) {
             nmod_poly_mat_clear(results[i]);
         }
-        for (slong j = 0; j < k && counted > 0; j++) {
-            evmlr_proof_clear(shuffle_proofs[j], pp2->shuf_ctx);
+        for (slong i = 0; i < n_checked; i++) {
+            nmod_poly_mat_clear(checked[i]);
         }
-        TEST_ASSERT(ok && seen[0] == 1 && seen[1] == 1 && seen[2] == 1, end);
+        evmlr_voting_transcript_clear(tr);
+        TEST_ASSERT(ok && ok_rt && verified == n_voters && same, end);
+        TEST_ASSERT(bad_stmt && bad_missing && bad_order && bad_trunc, end);
     } TEST_END;
 
 end:

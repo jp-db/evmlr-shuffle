@@ -2,6 +2,8 @@
 #include "evmlr_commit.h"
 #include "evmlr_utils.h"
 #include <stdint.h>
+#include <string.h>
+#include "fastrandombytes.h"
 #ifdef MAIN
 #include "test.h"
 #include "bench.h"
@@ -23,6 +25,51 @@ void evmlr_commit_ctx_init(evmlr_commit_ctx_t ctx, slong N, flint_rand_t state) 
     // A_2 \sample R_q^{K_SIS x 2K_SIS}
     nmod_poly_mat_init(ctx->A_2, K_SIS, 2 * K_SIS, MOD_Q);
     evmlr_utils_uniform_mat(ctx->A_2);
+
+    nmod_poly_init(ctx->cyclo_poly, MOD_Q);
+    nmod_poly_set_coeff_ui(ctx->cyclo_poly, DEGREE_N, 1);
+    nmod_poly_set_coeff_ui(ctx->cyclo_poly, 0, 1);
+}
+
+/* Uniform coefficients mod q from the stream, by rejection on 64-bit little-
+ * endian words (as evmlr_utils_uniform_poly does with system randomness). */
+static void expand_uniform_mat(nmod_poly_mat_t mat, prg_t *prg) {
+    const uint64_t limit = UINT64_MAX - (UINT64_MAX % MOD_Q + 1) % MOD_Q;
+    uint8_t buf[8 * DEGREE_N];
+
+    for (slong i = 0; i < nmod_poly_mat_nrows(mat); i++) {
+        for (slong j = 0; j < nmod_poly_mat_ncols(mat); j++) {
+            nmod_poly_struct *poly = nmod_poly_mat_entry(mat, i, j);
+            slong c = 0;
+
+            nmod_poly_zero(poly);
+            while (c < DEGREE_N) {
+                prg_bytes(prg, buf, sizeof(buf));
+                for (slong b = 0; b < DEGREE_N && c < DEGREE_N; b++) {
+                    uint64_t u = 0;
+                    for (int t = 0; t < 8; t++) {
+                        u |= (uint64_t) buf[8 * b + t] << (8 * t);
+                    }
+                    if (u <= limit) {
+                        nmod_poly_set_coeff_ui(poly, c++, (ulong) (u % MOD_Q));
+                    }
+                }
+            }
+        }
+    }
+}
+
+void evmlr_commit_ctx_init_seeded(evmlr_commit_ctx_t ctx, slong N, const uint8_t seed[32]) {
+    prg_t prg;
+
+    ctx->b_sqr = compute_b(N);
+    ctx->N = N;
+    prg_setseed(&prg, seed);
+    nmod_poly_mat_init(ctx->A_1, K_SIS, N, MOD_Q);
+    expand_uniform_mat(ctx->A_1, &prg);
+    nmod_poly_mat_init(ctx->A_2, K_SIS, 2 * K_SIS, MOD_Q);
+    expand_uniform_mat(ctx->A_2, &prg);
+    memset(&prg, 0, sizeof(prg));
 
     nmod_poly_init(ctx->cyclo_poly, MOD_Q);
     nmod_poly_set_coeff_ui(ctx->cyclo_poly, DEGREE_N, 1);

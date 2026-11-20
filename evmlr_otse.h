@@ -22,6 +22,9 @@ typedef evmlr_otse_ciphertext_struct evmlr_otse_ciphertext_t[1];
 
 void evmlr_otse_ctx_init(evmlr_otse_ctx_t ctx, slong L, flint_rand_t state);
 
+// Allocates a context of length L with H and H'' zero (H' = (0 | I_L)), for
+// the caller to fill in, e.g. from serialized parameters.
+void evmlr_otse_ctx_init_empty(evmlr_otse_ctx_t ctx, slong L);
 void evmlr_otse_ctx_clear(evmlr_otse_ctx_t ctx);
 
 // s \sample {0,1}^{K_LWR}

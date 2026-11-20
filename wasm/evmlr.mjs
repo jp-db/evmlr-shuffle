@@ -15,7 +15,11 @@
 //   // Counting
 //   const counter = evmlr.importParams(ppBytes);
 //   counter.importKeys(skBytes);
-//   const tally = counter.count([counter.importBallot(ballotBytes)]); // [42]
+//   const { tally, transcript } = counter.countWithTranscript([counter.importBallot(ballotBytes)]); // [42]
+//
+//   // Anyone: check the count from public data
+//   const auditor = evmlr.importParams(ppBytes);
+//   auditor.verifyCounting([auditor.importBallot(ballotBytes)], transcript); // [42]
 //
 // The bytes are the format of evmlr_serialize.h, the same as the native
 // build reads and writes. Casting encrypts the vote in one layer per server
@@ -146,21 +150,62 @@ export async function loadEvmlr(moduleArgs = {}) {
       return new Ballot(this, result);
     }
 
-    // Mixes and decrypts; the last ballot of each voter counts. Needs the
-    // secret keys. Returns the constant term of each vote, in shuffled order.
-    count(ballots) {
-      if (!this.ptr) throw new Error('election freed');
-      if (!this.hasKeys) throw new EvmlrError('count needs the secret keys (importKeys)');
-      if (ballots.length === 0) return [];
-      const list = u32(ballots.map((b) => {
+    ballotList(ballots) {
+      return u32(ballots.map((b) => {
         if (b.election !== this || !b.ptr) throw new Error('ballot from another election, or freed');
         return b.ptr;
       }));
+    }
+
+    // Mixes and decrypts; the last ballot of each voter counts. Needs the
+    // secret keys. Returns the constant term of each vote, in shuffled order.
+    count(ballots) {
+      return this.countWithTranscript(ballots, false).tally;
+    }
+
+    // count(), also returning the counting transcript (Uint8Array): every
+    // server's shuffle statement and proof, which anyone holding the public
+    // parameters and the ballots can check with verifyCounting().
+    countWithTranscript(ballots, withTranscript = true) {
+      if (!this.ptr) throw new Error('election freed');
+      if (!this.hasKeys) throw new EvmlrError('count needs the secret keys (importKeys)');
+      if (ballots.length === 0) return { tally: [], transcript: null };
+      const list = this.ballotList(ballots);
       const out = M._malloc(ballots.length * 4);
+      const trPtr = withTranscript ? M._malloc(8) : 0; // [data pointer, length]
       try {
-        const counted = M._evmlr_wasm_count(this.ptr, list, ballots.length, out);
+        const counted = M._evmlr_wasm_count(this.ptr, list, ballots.length, out,
+                                            trPtr, trPtr ? trPtr + 4 : 0);
         if (counted < 0) throw new EvmlrError('count failed');
-        return Array.from(M.HEAPU32.subarray(out >>> 2, (out >>> 2) + counted));
+        const tally = Array.from(M.HEAPU32.subarray(out >>> 2, (out >>> 2) + counted));
+        let transcript = null;
+        if (trPtr) {
+          const data = M.HEAPU32[trPtr >>> 2], len = M.HEAPU32[(trPtr >>> 2) + 1];
+          if (!data) throw new EvmlrError('could not export the counting transcript');
+          transcript = M.HEAPU8.slice(data, data + len);
+          M._free(data);
+        }
+        return { tally, transcript };
+      } finally {
+        if (trPtr) M._free(trPtr);
+        M._free(out);
+        M._free(list);
+      }
+    }
+
+    // Checks a counting transcript against the ballots that were counted,
+    // with the public parameters only. Returns the tally it proves, or
+    // throws EvmlrError if it does not verify.
+    verifyCounting(ballots, transcript) {
+      if (!this.ptr) throw new Error('election freed');
+      const list = this.ballotList(ballots);
+      const out = M._malloc(Math.max(1, ballots.length) * 4);
+      try {
+        const { result, status } = giveBytes(transcript, (ptr, len, st) =>
+          M._evmlr_wasm_verify_counting(this.ptr, list, ballots.length, ptr, len, out, st));
+        if (status !== 0) fail('verifyCounting', status);
+        if (result < 0) throw new EvmlrError('verifyCounting: the counting transcript does not verify', 0);
+        return Array.from(M.HEAPU32.subarray(out >>> 2, (out >>> 2) + result));
       } finally {
         M._free(out);
         M._free(list);

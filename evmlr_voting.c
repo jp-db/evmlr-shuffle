@@ -1,5 +1,6 @@
 #include "evmlr_voting.h"
 #include "evmlr_utils.h"
+#include "evmlr_challenge.h"
 #include <string.h>
 
 #ifdef MAIN
@@ -136,9 +137,37 @@ static void voting_decrypt_layer(nmod_poly_mat_t msg, nmod_poly_mat_t d_dagger, 
     evmlr_otse_keyclear(key);
 }
 
-static void sync_hpke_ctx(evmlr_hpke_ctx_t dst, const evmlr_hpke_ctx_t src) {
-    nmod_poly_mat_set(dst->otse_ctx->H, src->otse_ctx->H);
-    nmod_poly_mat_set(dst->otse_ctx->H_prime, src->otse_ctx->H_prime);
+static void absorb_u64(evmlr_challenge_t chal, uint64_t v) {
+    uint8_t b[8];
+    for (int i = 0; i < 8; i++) {
+        b[i] = (uint8_t) (v >> (8 * i));
+    }
+    evmlr_challenge_add_bytes(chal, b, sizeof(b));
+}
+
+/* The shuffle's commitment key used to be sampled by whoever ran setup or
+ * counting. The counting servers are the provers of the shuffle, and a
+ * prover who picks the commitment key can pick one with a trapdoor, which
+ * breaks binding and with it the soundness of the shuffle. The key is now
+ * expanded from a hash of the public parameters and N: nobody chooses it,
+ * and every verifier recomputes it. */
+void evmlr_voting_shuffle_ctx_init(evmlr_shuffle_ctx_t ctx, const evmlr_voting_pp_t pp, slong N) {
+    static const char domain[] = "evmlr-shuffle commitment key v1";
+    uint8_t seed[SHA256HashSize];
+    evmlr_challenge_t chal;
+
+    evmlr_challenge_init(chal);
+    evmlr_challenge_add_bytes(chal, (const uint8_t *) domain, sizeof(domain) - 1);
+    absorb_u64(chal, (uint64_t) pp->k);
+    absorb_u64(chal, (uint64_t) N);
+    evmlr_challenge_add_matrix(chal, pp->hpke_ctx->otse_ctx->H);
+    evmlr_challenge_add_matrix(chal, pp->hpke_ctx->otse_ctx->H_prime);
+    for (slong j = 0; j < pp->k; j++) {
+        evmlr_challenge_add_matrix(chal, pp->pks[j]->A);
+        evmlr_challenge_add_matrix(chal, pp->pks[j]->t);
+    }
+    evmlr_challenge_get_hash(seed, chal);
+    evmlr_shuffle_ctx_init_seeded(ctx, N, pp->hpke_ctx, seed);
 }
 
 // setup(k, state) -> (pp, sk)
@@ -151,10 +180,9 @@ void evmlr_voting_setup(evmlr_voting_pp_t pp, evmlr_voting_sk_t sk, slong k, fli
     // This is the maximum length of the messages being shuffled.
     pp->L_max = (k - 1) * K_LWR * (K_LWE + 1) + 1;
 
-    // Initialize HPKE and Shuffle contexts.
+    // Initialize the HPKE context; the shuffle context, which depends on the
+    // public keys, follows them.
     evmlr_hpke_ctx_init(pp->hpke_ctx, pp->L_max, state);
-    evmlr_shuffle_ctx_init(pp->shuf_ctx, SHUFFLE_N_MSGS, pp->L_max, state);
-    sync_hpke_ctx(pp->shuf_ctx->hpke_ctx, pp->hpke_ctx);
 
     // Allocate keys
     pp->pks = (evmlr_mlpke_pk_t*) malloc(k * sizeof(evmlr_mlpke_pk_t));
@@ -174,6 +202,8 @@ void evmlr_voting_setup(evmlr_voting_pp_t pp, evmlr_voting_sk_t sk, slong k, fli
 
         evmlr_mlpke_keypair_clear(kp);
     }
+
+    evmlr_voting_shuffle_ctx_init(pp->shuf_ctx, pp, SHUFFLE_N_MSGS);
 }
 
 // casting(submission, voter_id, vote, pp, state)
@@ -234,14 +264,10 @@ int evmlr_voting_verify_enc(const evmlr_voting_pp_t pp, const evmlr_voting_proof
     return ok;
 }
 
-// counting(...)
-slong evmlr_voting_counting(nmod_poly_mat_t* results, evmlr_shuffle_proof_t* shuffle_proofs, 
-                          const evmlr_voting_submission_t* submissions, slong num_submissions,
-                          const evmlr_voting_pp_t pp, const evmlr_voting_sk_t sk, flint_rand_t state) {
-    slong k = pp->k;
-
-    // 1. Apply revote policy to get the list of unique voter submissions.
-    evmlr_voting_submission_struct** active_subs = (evmlr_voting_submission_struct**) malloc(num_submissions * sizeof(evmlr_voting_submission_struct*));
+// Revote policy: the last submission of each voter counts. Fills active
+// (room for num_submissions) in chronological order and returns their number.
+static slong active_submissions(evmlr_voting_submission_struct** active_subs,
+                                const evmlr_voting_submission_t* submissions, slong num_submissions) {
     slong N = 0;
     for (slong i = num_submissions - 1; i >= 0; i--) {
         slong voter_id = submissions[i]->voter_id;
@@ -262,6 +288,20 @@ slong evmlr_voting_counting(nmod_poly_mat_t* results, evmlr_shuffle_proof_t* shu
         active_subs[i] = active_subs[N - 1 - i];
         active_subs[N - 1 - i] = tmp;
     }
+    return N;
+}
+
+// counting(...). With statements non-NULL, server j's shuffle statement is
+// moved into statements[j] instead of being freed.
+static slong counting_impl(nmod_poly_mat_t* results, evmlr_shuffle_proof_t* shuffle_proofs,
+                           evmlr_shuffle_pp_t* statements,
+                           const evmlr_voting_submission_t* submissions, slong num_submissions,
+                           const evmlr_voting_pp_t pp, const evmlr_voting_sk_t sk, flint_rand_t state) {
+    slong k = pp->k;
+
+    // 1. Apply revote policy to get the list of unique voter submissions.
+    evmlr_voting_submission_struct** active_subs = (evmlr_voting_submission_struct**) malloc(num_submissions * sizeof(evmlr_voting_submission_struct*));
+    slong N = active_submissions(active_subs, submissions, num_submissions);
 
     if (N == 0) {
         free(active_subs);
@@ -270,8 +310,7 @@ slong evmlr_voting_counting(nmod_poly_mat_t* results, evmlr_shuffle_proof_t* shu
 
     // Re-initialize shuffle context for N unique submissions
     evmlr_shuffle_ctx_clear((evmlr_shuffle_ctx_struct *)pp->shuf_ctx);
-    evmlr_shuffle_ctx_init((evmlr_shuffle_ctx_struct *)pp->shuf_ctx, N, pp->L_max, state);
-    sync_hpke_ctx(((evmlr_shuffle_ctx_struct *)pp->shuf_ctx)->hpke_ctx, pp->hpke_ctx);
+    evmlr_voting_shuffle_ctx_init((evmlr_shuffle_ctx_struct *)pp->shuf_ctx, pp, N);
 
     // 2. Initialize current ciphertexts and proofs
     evmlr_voting_layer_struct* curr_cts = (evmlr_voting_layer_struct*) malloc(N * sizeof(evmlr_voting_layer_struct));
@@ -411,16 +450,22 @@ slong evmlr_voting_counting(nmod_poly_mat_t* results, evmlr_shuffle_proof_t* shu
             printf("Warning: Shuffle verification failed at server %ld!\n", j);
         }
 
-        // Clean up pp/sp
+        // Clean up pp/sp, or hand the statement to the caller
         for (slong i = 0; i < N; i++) {
-            nmod_poly_mat_clear(shuf_pp->c_hat[i]);
-            nmod_poly_mat_clear(shuf_pp->c_star[i]->c);
             nmod_poly_mat_clear(a_mats[i]);
         }
-        free(shuf_pp->c_hat);
-        free(shuf_pp->c_star);
         free(a_mats);
-        evmlr_commit_clear(shuf_pp->D);
+        if (statements != NULL) {
+            statements[j][0] = shuf_pp[0];
+        } else {
+            for (slong i = 0; i < N; i++) {
+                nmod_poly_mat_clear(shuf_pp->c_hat[i]);
+                nmod_poly_mat_clear(shuf_pp->c_star[i]->c);
+            }
+            free(shuf_pp->c_hat);
+            free(shuf_pp->c_star);
+            evmlr_commit_clear(shuf_pp->D);
+        }
         nmod_poly_mat_clear(shuf_sp->r_D);
         free(shuf_sp->pi);
         for (slong i = 0; i < N; i++) {
@@ -465,6 +510,119 @@ slong evmlr_voting_counting(nmod_poly_mat_t* results, evmlr_shuffle_proof_t* shu
     free(remaining_proofs);
     free(active_subs);
 
+    return N;
+}
+
+slong evmlr_voting_counting(nmod_poly_mat_t* results, evmlr_shuffle_proof_t* shuffle_proofs,
+                          const evmlr_voting_submission_t* submissions, slong num_submissions,
+                          const evmlr_voting_pp_t pp, const evmlr_voting_sk_t sk, flint_rand_t state) {
+    return counting_impl(results, shuffle_proofs, NULL, submissions, num_submissions, pp, sk, state);
+}
+
+slong evmlr_voting_counting_transcript(nmod_poly_mat_t* results, evmlr_voting_transcript_t tr,
+                                       const evmlr_voting_submission_t* submissions, slong num_submissions,
+                                       const evmlr_voting_pp_t pp, const evmlr_voting_sk_t sk, flint_rand_t state) {
+    tr->k = pp->k;
+    tr->statements = (evmlr_shuffle_pp_t*) malloc(pp->k * sizeof(evmlr_shuffle_pp_t));
+    tr->proofs = (evmlr_shuffle_proof_t*) malloc(pp->k * sizeof(evmlr_shuffle_proof_t));
+    tr->N = counting_impl(results, tr->proofs, tr->statements, submissions, num_submissions, pp, sk, state);
+    if (tr->N == 0) {
+        free(tr->statements);
+        free(tr->proofs);
+        tr->statements = NULL;
+        tr->proofs = NULL;
+    }
+    return tr->N;
+}
+
+void evmlr_voting_transcript_clear(evmlr_voting_transcript_t tr) {
+    /* The clear functions only read the message count from the context. */
+    evmlr_shuffle_ctx_struct shape;
+
+    if (tr->N == 0) {
+        return;
+    }
+    memset(&shape, 0, sizeof(shape));
+    shape.N = tr->N;
+    for (slong j = 0; j < tr->k; j++) {
+        evmlr_shuffle_pp_clear(tr->statements[j], &shape);
+        evmlr_proof_clear(tr->proofs[j], &shape);
+    }
+    free(tr->statements);
+    free(tr->proofs);
+    tr->statements = NULL;
+    tr->proofs = NULL;
+    tr->N = 0;
+}
+
+/* Whether rows [0, len) of got equal rows [offset, offset + len) of want and
+ * the rest of got is zero. */
+static int rows_match(const nmod_poly_mat_t got, const nmod_poly_mat_t want, slong offset, slong len) {
+    if (nmod_poly_mat_ncols(got) != 1 || nmod_poly_mat_nrows(got) < len
+        || nmod_poly_mat_nrows(want) < offset + len) {
+        return 0;
+    }
+    for (slong r = 0; r < nmod_poly_mat_nrows(got); r++) {
+        const nmod_poly_struct* g = nmod_poly_mat_entry(got, r, 0);
+        if (r < len ? !nmod_poly_equal(g, nmod_poly_mat_entry(want, offset + r, 0)) : !nmod_poly_is_zero(g)) {
+            return 0;
+        }
+    }
+    return 1;
+}
+
+slong evmlr_voting_verify_counting(nmod_poly_mat_t* results, const evmlr_voting_transcript_t tr,
+                                   const evmlr_voting_submission_t* submissions, slong num_submissions,
+                                   const evmlr_voting_pp_t pp) {
+    const slong k = pp->k, hdr = K_LWR * (K_LWE + 1);
+    evmlr_voting_submission_struct** active_subs;
+    evmlr_shuffle_ctx_t ctx;
+    slong N;
+    int ok = 1;
+
+    if (tr->k != k || num_submissions < 0) {
+        return -1;
+    }
+    active_subs = (evmlr_voting_submission_struct**) malloc((num_submissions ? num_submissions : 1) * sizeof(*active_subs));
+    N = active_submissions(active_subs, submissions, num_submissions);
+    if (N != tr->N) {
+        free(active_subs);
+        return -1;
+    }
+    if (N == 0) {
+        free(active_subs);
+        return 0;
+    }
+
+    evmlr_voting_shuffle_ctx_init(ctx, pp, N);
+    for (slong j = 0; j < k && ok; j++) {
+        // Server j's input: the OTSE parts of the ballots' outer layers, then
+        // those of the ciphertexts the previous server output.
+        const slong L_in = (k - j - 1) * hdr + 1;
+        const evmlr_shuffle_pp_struct* st = tr->statements[j];
+
+        for (slong i = 0; i < N && ok; i++) {
+            if (j == 0) {
+                ok = rows_match(st->c_star[i]->c, active_subs[i]->ballot->layer->otse_cipher->c, 0, L_in);
+            } else {
+                ok = rows_match(st->c_star[i]->c, tr->statements[j - 1]->c_hat[i], hdr, L_in);
+            }
+        }
+        ok = ok && evmlr_shuffle_verify(tr->proofs[j], ctx, st);
+    }
+    evmlr_shuffle_ctx_clear(ctx);
+    free(active_subs);
+    if (!ok) {
+        return -1;
+    }
+    // The last server's output rows 0..0 are the votes.
+    if (results != NULL) {
+        for (slong i = 0; i < N; i++) {
+            nmod_poly_mat_init(results[i], 1, 1, MOD_Q);
+            nmod_poly_set(nmod_poly_mat_entry(results[i], 0, 0),
+                          nmod_poly_mat_entry(tr->statements[k - 1]->c_hat[i], 0, 0));
+        }
+    }
     return N;
 }
 
@@ -652,8 +810,7 @@ void bench_voting_protocol(flint_rand_t state) {
 
     // Re-initialize shuffle context for N unique submissions
     evmlr_shuffle_ctx_clear((evmlr_shuffle_ctx_struct *)pp->shuf_ctx);
-    evmlr_shuffle_ctx_init((evmlr_shuffle_ctx_struct *)pp->shuf_ctx, N, pp->L_max, state);
-    sync_hpke_ctx(((evmlr_shuffle_ctx_struct *)pp->shuf_ctx)->hpke_ctx, pp->hpke_ctx);
+    evmlr_voting_shuffle_ctx_init((evmlr_shuffle_ctx_struct *)pp->shuf_ctx, pp, N);
 
     // Initialize current ciphertexts and proofs
     evmlr_voting_layer_struct* curr_cts = (evmlr_voting_layer_struct*) malloc(N * sizeof(evmlr_voting_layer_struct));

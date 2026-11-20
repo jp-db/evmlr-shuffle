@@ -1,9 +1,10 @@
 // End-to-end check of the WebAssembly library under Node:
 //   make -f Makefile.wasm lib && node wasm/demo.mjs
 //
-// Three separate handles stand for the three parties, and only bytes pass
-// between them: the authority runs setup, the voters cast from the public
-// parameters alone, and the counter imports parameters, keys and ballots.
+// Separate handles stand for the parties, and only bytes pass between them:
+// the authority runs setup, the voters cast from the public parameters
+// alone, the counter imports parameters, keys and ballots and publishes a
+// transcript, and an auditor checks the count from public data only.
 // Mirrors test_voting_protocol in evmlr_voting.c: voter 2 votes twice and
 // only the second vote counts.
 import { loadEvmlr, EvmlrError } from './evmlr.mjs';
@@ -51,14 +52,36 @@ try {
 
 const ballots = ballotBytes.map((b) => counter.importBallot(b));
 t = performance.now();
-const tally = counter.count(ballots);
-console.log(`count: ${ms(t)}`);
+const { tally, transcript } = counter.countWithTranscript(ballots);
+console.log(`count: ${ms(t)}; transcript ${transcript.length} B`);
 console.log('tally (shuffled):', tally);
-
-const expected = [10, 20, 30, 40, 50];
-const ok = JSON.stringify([...tally].sort((a, b) => a - b)) === JSON.stringify(expected);
-console.log(ok ? 'OK' : `MISMATCH, expected ${expected}`);
-
 ballots.forEach((b) => b.free());
 counter.free();
+
+// Auditor: public parameters, ballots and transcript; no keys.
+const auditor = evmlr.importParams(ppBytes);
+const audited = ballotBytes.map((b) => auditor.importBallot(b));
+t = performance.now();
+const verified = auditor.verifyCounting(audited, transcript);
+console.log(`audit: ${ms(t)}; verified tally:`, verified);
+
+// A transcript with one byte of a proof changed does not verify.
+const tampered = transcript.slice();
+tampered[tampered.length - 100] ^= 1;
+let refused = false;
+try {
+  auditor.verifyCounting(audited, tampered);
+} catch (e) {
+  if (!(e instanceof EvmlrError)) throw e;
+  refused = true;
+  console.log('tampered transcript refused:', e.message);
+}
+audited.forEach((b) => b.free());
+auditor.free();
+
+const expected = [10, 20, 30, 40, 50];
+const sorted = (xs) => JSON.stringify([...xs].sort((a, b) => a - b));
+const ok = sorted(tally) === JSON.stringify(expected)
+  && JSON.stringify(verified) === JSON.stringify(tally) && refused;
+console.log(ok ? 'OK' : `MISMATCH, expected ${expected}`);
 process.exit(ok ? 0 : 1);

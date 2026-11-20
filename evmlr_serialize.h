@@ -43,7 +43,7 @@
 
 #include "evmlr_voting.h"
 
-#define EVMLR_SER_VERSION 1
+#define EVMLR_SER_VERSION 2
 #define EVMLR_SER_HEADER_LEN 20
 
 typedef enum {
@@ -51,7 +51,8 @@ typedef enum {
     EVMLR_SER_SK              = 2, /**< the servers' secret keys */
     EVMLR_SER_SUBMISSION      = 3, /**< a ballot with its proofs of correct encryption */
     EVMLR_SER_SHUFFLE_PROOF   = 4, /**< a proof of shuffle */
-    EVMLR_SER_SHUFFLE_STMT    = 5  /**< what a proof of shuffle is about: D, c_hat, c_star */
+    EVMLR_SER_SHUFFLE_STMT    = 5, /**< what a proof of shuffle is about: D, c_hat, c_star */
+    EVMLR_SER_TRANSCRIPT      = 6  /**< a count: every server's shuffle statement and proof */
 } evmlr_ser_type_t;
 
 typedef enum {
@@ -84,8 +85,9 @@ const char *evmlr_ser_strerror(int status);
 /** Reads the type out of an encoding's header, or returns a negative status. */
 int evmlr_ser_peek_type(const uint8_t *in, size_t len);
 
-/* Public parameters: k, the HPKE/OTSE matrices, the servers' public keys and
- * the current shuffle (commitment) context. */
+/* Public parameters: k, the number of messages of the shuffle context, the
+ * OTSE matrices and the servers' public keys. The shuffle's commitment key is
+ * not encoded: import derives it (evmlr_voting_shuffle_ctx_init). */
 int evmlr_serialize_pp(evmlr_buf_t *out, const evmlr_voting_pp_t pp);
 int evmlr_deserialize_pp(evmlr_voting_pp_t pp, const uint8_t *in, size_t len);
 
@@ -110,5 +112,13 @@ int evmlr_serialize_shuffle_statement(evmlr_buf_t *out, const evmlr_shuffle_pp_t
                                       const evmlr_shuffle_ctx_t ctx);
 int evmlr_deserialize_shuffle_statement(evmlr_shuffle_pp_t stmt, const evmlr_shuffle_ctx_t ctx,
                                         const uint8_t *in, size_t len);
+
+/* A counting transcript (evmlr_voting_counting_transcript), checked with
+ * evmlr_voting_verify_counting. The shuffle context is derived from pp and
+ * the transcript's N. */
+int evmlr_serialize_transcript(evmlr_buf_t *out, const evmlr_voting_transcript_t tr,
+                               const evmlr_voting_pp_t pp);
+int evmlr_deserialize_transcript(evmlr_voting_transcript_t tr, const evmlr_voting_pp_t pp,
+                                 const uint8_t *in, size_t len);
 
 #endif /* EVMLR_SERIALIZE_H */

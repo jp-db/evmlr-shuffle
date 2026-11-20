@@ -21,6 +21,7 @@ BINS    = $(TARGETS:%=$(PREFIX)_%.bin)
 COMMON_OBJS = $(PREFIX)_utils.o $(PREFIX)_crt.o test.o bench.o cpucycles.o randombytes.o
 
 # Extra objects required by individual binaries.
+$(PREFIX)_commit_EXTRA    = fastrandombytes.o
 $(PREFIX)_hpke_EXTRA      = $(PREFIX)_otse.o $(PREFIX)_mlpke.o
 $(PREFIX)_shuffle_EXTRA   = $(PREFIX)_hpke.o $(PREFIX)_commit.o $(PREFIX)_mlpke.o $(PREFIX)_otse.o sha224-256.o fastrandombytes.o $(PREFIX)_lin_proof.o $(PREFIX)_bin_proof.o $(PREFIX)_challenge.o gaussian.o
 $(PREFIX)_lin_proof_EXTRA = sha224-256.o fastrandombytes.o $(PREFIX)_challenge.o gaussian.o

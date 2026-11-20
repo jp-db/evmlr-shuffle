@@ -90,10 +90,18 @@ build replaces (randomness, AES-NI, the SSE Gaussian sampler).
 ### Serialization
 
 `evmlr_serialize.h` imports and exports the public parameters, the secret
-keys, ballots with their proofs of correct encryption, and proofs of
-shuffle. The bytes are platform-independent: a ballot cast in the browser
-build verifies in the native one. `make serialize` runs its tests; the format
-is described in [wasm/README.md](wasm/README.md#serialization-format).
+keys, ballots with their proofs of correct encryption, proofs of shuffle,
+and counting transcripts. The bytes are platform-independent: a ballot cast
+in the browser build verifies in the native one. `make serialize` runs its
+tests; the format is described in
+[wasm/README.md](wasm/README.md#serialization-format).
+
+`evmlr_voting_counting_transcript` publishes every server's proof of
+shuffle, and `evmlr_voting_verify_counting` lets anyone check a count from
+the public parameters, the ballots and that transcript. The shuffle's
+commitment key is derived from a hash of the public parameters, so the
+servers that prove the shuffle cannot choose it
+([details](wasm/README.md#verifiable-counting)).
 
 To tweak the parameters of the schemes, mainly the number of messages, you can
 modify `evmlr_params.h` in the root directory. Header dependencies are tracked,

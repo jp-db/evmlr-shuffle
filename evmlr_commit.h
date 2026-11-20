@@ -1,6 +1,7 @@
 #ifndef EVMLR_SHUFFLE_EVMLR_COMMIT_H
 #define EVMLR_SHUFFLE_EVMLR_COMMIT_H
 #include "evmlr_params.h"
+#include <stdint.h>
 
 // B := \sqrt{nL + n 2 K_SIS ETA^2}
 // public_parameters pp := (K_SIS, M_LEN, ETA, B, A_1, A_2)
@@ -24,6 +25,10 @@ ulong compute_b(ulong N);
 
 void evmlr_commit_ctx_init(evmlr_commit_ctx_t ctx, slong N, flint_rand_t state);
 
+// Like evmlr_commit_ctx_init, but A_1 and A_2 are expanded from a public
+// 32-byte seed (AES-256-CTR, the same bytes on every platform), so that no
+// party chooses the key and anyone can recompute it.
+void evmlr_commit_ctx_init_seeded(evmlr_commit_ctx_t ctx, slong N, const uint8_t seed[32]);
 void evmlr_commit_ctx_clear(evmlr_commit_ctx_t ctx);
 
 // Initialises a commitment. The caller owns it and must clear it with

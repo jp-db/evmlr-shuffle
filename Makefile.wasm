@@ -45,7 +45,7 @@ NODE_LDFLAGS = $(LDFLAGS) -sENVIRONMENT=node -sEXIT_RUNTIME=1
 
 # The library: an ES module exporting a factory, for browsers, workers and Node.
 LIB_FUNCS  = param setup election_free has_sk cast ballot_free ballot_voter count strerror
-LIB_FUNCS += export_pp import_pp export_sk import_sk export_ballot import_ballot
+LIB_FUNCS += export_pp import_pp export_sk import_sk export_ballot import_ballot verify_counting
 comma := ,
 empty :=
 space := $(empty) $(empty)
@@ -65,6 +65,7 @@ PRG_OBJS    = fastrandombytes.o fastrandombytes_portable.o
 GAUSS_OBJS  = gaussian_portable.o
 
 # Same object lists as the native Makefile, with the portable substitutions.
+$(PREFIX)_commit_EXTRA    = $(PRG_OBJS)
 $(PREFIX)_hpke_EXTRA      = $(PREFIX)_otse.o $(PREFIX)_mlpke.o
 $(PREFIX)_shuffle_EXTRA   = $(PREFIX)_hpke.o $(PREFIX)_commit.o $(PREFIX)_mlpke.o $(PREFIX)_otse.o sha224-256.o $(PRG_OBJS) $(PREFIX)_lin_proof.o $(PREFIX)_bin_proof.o $(PREFIX)_challenge.o $(GAUSS_OBJS)
 $(PREFIX)_lin_proof_EXTRA = sha224-256.o $(PRG_OBJS) $(PREFIX)_challenge.o $(GAUSS_OBJS)

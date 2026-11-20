@@ -41,6 +41,11 @@ typedef evmlr_shuffle_proof_struct evmlr_shuffle_proof_t[1];
 
 void evmlr_shuffle_ctx_init(evmlr_shuffle_ctx_t ctx, slong N, slong L, flint_rand_t state);
 
+// A context for N messages over the OTSE matrices of hpke (copied), whose
+// commitment key is expanded from seed (see evmlr_commit_ctx_init_seeded).
+void evmlr_shuffle_ctx_init_seeded(evmlr_shuffle_ctx_t ctx, slong N, const evmlr_hpke_ctx_t hpke, const uint8_t seed[32]);
+// The commitment message length evmlr_shuffle_ctx_init uses for N messages of length L.
+slong evmlr_shuffle_com_len(slong N, slong L);
 void evmlr_shuffle_ctx_clear(evmlr_shuffle_ctx_t ctx);
 
 // Frees a statement (D, c_hat, c_star) of a shuffle of ctx->N messages.
