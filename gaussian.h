@@ -3,10 +3,7 @@
 
 #include <stdint.h>
 #include <stddef.h>
-#include "evmlr_portable.h"
-#ifndef EVMLR_PORTABLE
 #include <emmintrin.h> // for __m128d
-#endif
 
 #ifdef __cplusplus
 extern "C" {
@@ -20,10 +17,8 @@ typedef struct discrete_gaussian_ctx_struct {
     double sigma;
     double discrete_normalisation;
     double sigma_inv;
-#ifndef EVMLR_PORTABLE
     __m128d v_sigma_inv;
     __m128d v_discrete_normalisation;
-#endif
     double norm[NORM_BATCH];
     uint64_t head;
 } discrete_gaussian_ctx_struct;

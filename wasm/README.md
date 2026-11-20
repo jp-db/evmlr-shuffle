@@ -29,9 +29,10 @@ The outputs:
 | `wasm/demo.mjs` | authority, voters, counter and auditor exchanging only bytes (`make -f Makefile.wasm demo`) |
 | `wasm/build/evmlr_*.js` | the test/benchmark binaries; `node wasm/build/evmlr_voting.js test` |
 
-The module uses neither WASM SIMD nor threads, so it runs on every engine and
-needs no cross-origin isolation. Casting takes a while; in a page, run it in a
-Web Worker.
+The module needs WASM SIMD (Chrome 91, Firefox 89, Safari 16.4, Node 16.4
+or later), which the Gaussian sampler runs on (see below). It uses no
+threads, so it needs no SharedArrayBuffer or cross-origin isolation. Casting
+takes a while; in a page, run it in a Web Worker.
 
 ## JavaScript API
 
@@ -119,14 +120,15 @@ nobody chooses the key, and every verifier recomputes the same one.
 
 ## What changes for WebAssembly
 
-`evmlr_portable.h` defines `EVMLR_PORTABLE` for every Emscripten build. Without
-Emscripten it is never set, so native builds compile the same code as before.
+Native builds compile the same code as before: every WASM-only path is behind
+`__EMSCRIPTEN__`, or behind `EVMLR_PORTABLE`, which `evmlr_portable.h`
+defines only for Emscripten.
 
 | Native | Problem in WASM | WASM replacement |
 | --- | --- | --- |
 | `getrandom(2)` (`evmlr_utils.c`, `evmlr_main.h`), `/dev/urandom` (`randombytes.c`) | no system calls | `getentropy()`, which Emscripten implements with `crypto.getRandomValues` (browser) or `crypto.randomFillSync` (Node), in chunks of 256 bytes |
 | AES-256-CTR with AES-NI (`fastrandombytes.c`) | no AES-NI | `fastrandombytes_portable.c`: bitsliced, constant-time AES (BearSSL's `aes_ct` design) |
-| FACCT Gaussian with SSE4.1 + VCL (`gaussian.cpp`) | [Emscripten has no SSE4.1 `_mm_round_pd`](https://emscripten.org/docs/porting/simd.html), and VCL needs x86 | `gaussian_portable.c`: the same FACCT algorithm in scalar C |
+| FACCT Gaussian with SSE4.1 + VCL (`gaussian.cpp`) | no SSE natively; Emscripten has no `<x86intrin.h>` and no `_mm_setcsr` | none: `gaussian.cpp`, `gaussian.h` and `vcl/` are unchanged, compiled with `-msimd128 -msse4.1` on [Emscripten's SSE emulation](https://emscripten.org/docs/porting/simd.html), with `wasm/compat/x86intrin.h` filling the two gaps |
 | `rdtsc` (`cpucycles.c`) | no cycle counter | nanoseconds from `performance.now()` |
 
 ### Proofs made in WASM verify natively
@@ -146,11 +148,29 @@ stream, so both builds must produce the same stream and read it the same way:
 Also for 32-bit `ulong`: `evmlr_commit.c` sums the commitment-opening norm in
 64 bits. With a 32-bit sum, a large `r` could wrap it and pass `verify_norm`.
 
-### Why not malb/dgs
+### The Gaussian sampler on WASM SIMD
 
-[dgs](https://github.com/malb/dgs) is portable, but it would replace the
-sampler with a different algorithm and its own randomness source, so it
-would need patching to draw from `fastrandombytes()`. The scalar port keeps
-the sampler the proofs were analysed with. For the same random stream it
-returns the same samples as `gaussian.cpp`, except where libm and VCL round
-`log`/`sin`/`cos` differently in the last bit and that flips a decision.
+Emscripten implements the x86 SSE–AVX2 intrinsics on top of WASM SIMD.
+`_mm_round_pd` and `_mm_floor_pd` map to native opcodes. Others the sampler
+uses, such as `_mm_comile_sd`, `_mm_cvtpd_epi32` and `_mm_cvtsd_si64`, are
+emulated one lane at a time. So `gaussian.cpp` compiles unchanged, given two
+fixes in `wasm/compat/x86intrin.h`:
+
+- Emscripten ships no `<x86intrin.h>`, and clang's own one pulls in x86-only
+  builtins. The compat header maps it to Emscripten's `<immintrin.h>`.
+- VCL references `_mm_setcsr`, which WebAssembly cannot implement (it has no
+  rounding-mode or denormal control). With SSE4.1 enabled, the sampler never
+  calls it, so the compat header defines it to trap.
+
+Because the same code runs on both platforms, the WASM sampler returns the
+same samples as the native one, bit for bit. That was checked on 1.4 million
+samples, σ from 1 to 23456.7, from the same seed. It is not faster than a
+scalar port (FACCT works on one lane at a time), but it leaves a single
+sampler to maintain.
+
+The AES stream cannot follow this route. Emscripten has no AES-NI intrinsics,
+and WebAssembly has no AES instruction to map them to. A software
+`_mm_aesenc_si128` would let `fastrandombytes.c` compile unchanged, but each
+call encrypts a single block. Measured, that halved the stream's throughput
+and made the encryption proof 65% slower than `fastrandombytes_portable.c`,
+which encrypts two blocks per pass.

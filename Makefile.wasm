@@ -1,9 +1,11 @@
 # WebAssembly build, with Emscripten. The native Makefile is unchanged; this
-# one compiles the same sources with emcc, swapping in the portable versions
-# of the x86-only code (see evmlr_portable.h):
+# one compiles the same sources with emcc:
 #
+#   gaussian.cpp          SSE4.1 + VCL    -> unchanged, on Emscripten's SSE4.1
+#                                            emulation over WASM SIMD
+#                                            (wasm/compat/x86intrin.h)
 #   fastrandombytes.c     AES-NI          -> + fastrandombytes_portable.c
-#   gaussian.cpp          SSE4.1 + VCL    -> gaussian_portable.c
+#                                            (WASM has no AES; evmlr_portable.h)
 #   getrandom / urandom   system calls    -> getentropy (crypto.getRandomValues)
 #   cpucycles.c           rdtsc           -> performance.now()
 #
@@ -21,6 +23,7 @@
 # Objects go to wasm/build, so they never mix with the native *.o files.
 
 EMCC ?= emcc
+EMXX ?= em++
 NODE ?= node
 OPT  ?= -O3
 EXTRA_CFLAGS ?=
@@ -28,9 +31,14 @@ EXTRA_CFLAGS ?=
 DEPS_PREFIX ?= wasm/deps/prefix
 B = wasm/build
 
-# No -msimd128 and no -pthread: the module runs on any WebAssembly engine,
-# without SIMD or SharedArrayBuffer (so no cross-origin isolation is needed).
-CFLAGS   = $(OPT) -Wall -I. -I$(DEPS_PREFIX)/include $(EXTRA_CFLAGS)
+# WASM SIMD, for Emscripten's SSE4.1 emulation that gaussian.cpp runs on. It
+# applies to every file, not only gaussian.cpp: gaussian.h puts __m128d in
+# discrete_gaussian_ctx_struct, which the proofs embed, and every file must
+# see the same layout. The module therefore needs an engine with WASM SIMD:
+# Chrome 91, Firefox 89, Safari 16.4, Node 16.4 or later. No -pthread, so no
+# SharedArrayBuffer or cross-origin isolation is needed.
+SIMDFLAGS = -msimd128 -msse4.1
+CFLAGS   = $(OPT) -Wall $(SIMDFLAGS) -I. -Iwasm/compat -I$(DEPS_PREFIX)/include $(EXTRA_CFLAGS)
 DEPFLAGS = -MMD -MP
 LIBS     = $(DEPS_PREFIX)/lib/libflint.a $(DEPS_PREFIX)/lib/libmpfr.a $(DEPS_PREFIX)/lib/libgmp.a
 
@@ -62,7 +70,7 @@ LIB     = $(B)/evmlr.mjs
 COMMON_OBJS = $(PREFIX)_utils.o $(PREFIX)_crt.o test.o bench.o cpucycles.o randombytes.o
 # fastrandombytes.o keeps the global stream; the AES itself is portable.
 PRG_OBJS    = fastrandombytes.o fastrandombytes_portable.o
-GAUSS_OBJS  = gaussian_portable.o
+GAUSS_OBJS  = gaussian.o
 
 # Same object lists as the native Makefile, with the portable substitutions.
 $(PREFIX)_commit_EXTRA    = $(PRG_OBJS)
@@ -123,11 +131,14 @@ $(B)/%.main.o: %.c | $(B) check-deps
 $(B)/wasm_%.o: wasm/%.c | $(B) check-deps
 	$(EMCC) $(CFLAGS) $(DEPFLAGS) -c $< -o $@
 
-# The scalar Gaussian mirrors SSE code that never fuses a multiply and an add.
-$(B)/gaussian_portable.o: CFLAGS += -ffp-contract=off
-
 $(B)/%.o: %.c | $(B) check-deps
 	$(EMCC) $(CFLAGS) $(DEPFLAGS) -c $< -o $@
+
+# gaussian.cpp and VCL, unchanged. VCL includes <smmintrin.h> itself, so the
+# compat header is forced in to define what Emscripten lacks (_mm_setcsr).
+# -Wno-parentheses: a VCL macro use that Emscripten's tmmintrin.h warns on.
+$(B)/gaussian.o: gaussian.cpp | $(B) check-deps
+	$(EMXX) $(CFLAGS) -include wasm/compat/x86intrin.h -Wno-parentheses $(DEPFLAGS) -c $< -o $@
 
 clean:
 	rm -rf $(B)

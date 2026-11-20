@@ -85,7 +85,9 @@ make -f Makefile.wasm test  # build, then run the test suites under Node
 ```
 
 See [wasm/README.md](wasm/README.md) for the JS API and for what the WASM
-build replaces (randomness, AES-NI, the SSE Gaussian sampler).
+build changes: the randomness source, and a portable AES in place of AES-NI.
+The Gaussian sampler compiles unchanged on WASM SIMD, so the module needs an
+engine with SIMD support (Chrome 91, Firefox 89, Safari 16.4, Node 16.4).
 
 ### Serialization
 
@@ -119,7 +121,11 @@ so editing it rebuilds everything that depends on it.
       2^64-1, which is undefined. UBSan reports it from the voting benchmark.
       Since a wrong rejection decision biases the sampler, this is worth
       treating as correctness-relevant rather than cosmetic. The sanitizer CI
-      job reports but does not fail on it until this is resolved.
+      job reports but does not fail on it until this is resolved. The
+      WebAssembly build compiles the same code with clang, which, like gcc,
+      may assume the shift never overflows. Masking the count
+      (`res_exponent & 63`, what x86 and WASM shifts do in hardware) fixes
+      both builds.
 - [ ] Free the keypairs allocated inside the benchmark timing loops (`bench()`
       in `evmlr_mlpke.c` and `evmlr_hpke.c` regenerate a keypair per iteration
       without clearing the previous one). Harness-only, but it is why leak
