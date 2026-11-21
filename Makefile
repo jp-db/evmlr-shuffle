@@ -31,7 +31,18 @@ $(PREFIX)_voting_EXTRA    = $(PREFIX)_shuffle.o $(PREFIX)_hpke.o $(PREFIX)_commi
 $(PREFIX)_enc_proof_EXTRA = $(PREFIX)_lin_proof.o $(PREFIX)_mlpke.o $(PREFIX)_otse.o $(PREFIX)_hpke.o $(PREFIX)_challenge.o sha224-256.o fastrandombytes.o gaussian.o
 $(PREFIX)_serialize_EXTRA = $(PREFIX)_voting.o $(PREFIX)_shuffle.o $(PREFIX)_hpke.o $(PREFIX)_commit.o $(PREFIX)_mlpke.o $(PREFIX)_otse.o sha224-256.o fastrandombytes.o $(PREFIX)_lin_proof.o $(PREFIX)_bin_proof.o $(PREFIX)_challenge.o $(PREFIX)_enc_proof.o gaussian.o
 
-.PHONY: all build test bench run clean help $(TARGETS)
+.PHONY: all build test bench run clean help shared $(TARGETS)
+
+# Shared library: the protocol without the test/benchmark harness. Its objects
+# are compiled again with -fPIC (as %.pic.o) so the binaries stay as they are.
+LIB_NAME    = lib$(PREFIX).so
+LIB_VERSION = 0
+LIB_SONAME  = $(LIB_NAME).$(LIB_VERSION)
+LIB_OBJS    = $(addsuffix .pic.o, \
+	$(PREFIX)_utils $(PREFIX)_crt $(PREFIX)_mlpke $(PREFIX)_otse $(PREFIX)_hpke \
+	$(PREFIX)_commit $(PREFIX)_challenge $(PREFIX)_lin_proof $(PREFIX)_bin_proof \
+	$(PREFIX)_enc_proof $(PREFIX)_shuffle $(PREFIX)_voting $(PREFIX)_serialize \
+	sha224-256 fastrandombytes gaussian randombytes cpucycles)
 
 ## all:   build every binary (does not run anything)
 all: build
@@ -51,6 +62,15 @@ bench: $(BINS)
 		echo "=== $$b ==="; ./$$b bench || fail=1; \
 	done; exit $$fail
 
+## shared: build the shared library lib$(PREFIX).so (link with -levmlr)
+shared: $(LIB_NAME)
+
+$(LIB_NAME): $(LIB_SONAME)
+	ln -sf $< $@
+
+$(LIB_SONAME): $(LIB_OBJS)
+	$(CC) $(CFLAGS) -shared -Wl,-soname,$(LIB_SONAME) -Wl,--no-undefined $^ -o $@ $(LIBS)
+
 ## run:   build, then run tests and benchmarks for every binary
 run: $(BINS)
 	@fail=0; for b in $(BINS); do \
@@ -65,6 +85,8 @@ $(TARGETS): %: $(PREFIX)_%.bin
 # instruction sets enabled even when ARCH does not imply them (e.g. ARCH=).
 fastrandombytes.o: EXTRA_CFLAGS += -maes -msse4.1
 gaussian.o:        EXTRA_CFLAGS += -msse4.1
+fastrandombytes.pic.o: EXTRA_CFLAGS += -maes -msse4.1
+gaussian.pic.o:        EXTRA_CFLAGS += -msse4.1
 
 .SECONDARY: # keep the %.main.o intermediates so rebuilds stay incremental
 
@@ -83,6 +105,12 @@ gaussian.o:        EXTRA_CFLAGS += -msse4.1
 %.o: %.cpp
 	$(CXX) $(CFLAGS) $(DEPFLAGS) -c $< -o $@
 
+%.pic.o: %.c
+	$(CC) $(CFLAGS) $(DEPFLAGS) -fPIC -c $< -o $@
+
+%.pic.o: %.cpp
+	$(CXX) $(CFLAGS) $(DEPFLAGS) -fPIC -c $< -o $@
+
 help:
 	@echo "Targets:"
 	@sed -n 's/^## //p' $(MAKEFILE_LIST)
@@ -90,7 +118,7 @@ help:
 	@echo "TARGETS = $(TARGETS)"
 
 clean:
-	rm -f *.o *.d *.so *.bin
+	rm -f *.o *.d *.so *.so.* *.bin
 
 # Header dependencies recorded by -MMD, so that editing e.g. evmlr_params.h
 # rebuilds everything that includes it.

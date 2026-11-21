@@ -37,6 +37,7 @@ as a quick syntax check. Parallel builds are supported: `make -j$(nproc)`.
 | `make bench` | Run the benchmark suites only — slow |
 | `make run` | Run tests and benchmarks for every binary (the old `make` behaviour) |
 | `make <name>` | Build and run one binary, e.g. `make shuffle` or `make commit` |
+| `make shared` | Build the shared library `libevmlr.so` (soname `libevmlr.so.0`), without the test/benchmark harness; link with `-levmlr -lflint -lgmp` |
 | `make help` | List the available targets |
 | `make clean` | Remove build artifacts |
 
