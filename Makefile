@@ -14,7 +14,7 @@ DEPFLAGS = -MMD -MP
 LIBS     = -lflint -lgmp -lstdc++ -lm
 
 PREFIX  = evmlr
-TARGETS = mlpke commit otse hpke shuffle lin_proof lin_comp bin_proof voting enc_proof serialize
+TARGETS = mlpke commit otse hpke shuffle lin_proof lin_comp bin_proof voting enc_proof serialize api
 BINS    = $(TARGETS:%=$(PREFIX)_%.bin)
 
 # Objects every binary needs: shared helpers plus the test/benchmark harness.
@@ -29,6 +29,7 @@ $(PREFIX)_lin_comp_EXTRA  = sha224-256.o fastrandombytes.o $(PREFIX)_challenge.o
 $(PREFIX)_bin_proof_EXTRA = sha224-256.o fastrandombytes.o $(PREFIX)_commit.o $(PREFIX)_challenge.o gaussian.o
 $(PREFIX)_voting_EXTRA    = $(PREFIX)_shuffle.o $(PREFIX)_hpke.o $(PREFIX)_commit.o $(PREFIX)_mlpke.o $(PREFIX)_otse.o sha224-256.o fastrandombytes.o $(PREFIX)_lin_proof.o $(PREFIX)_bin_proof.o $(PREFIX)_challenge.o $(PREFIX)_enc_proof.o gaussian.o
 $(PREFIX)_enc_proof_EXTRA = $(PREFIX)_lin_proof.o $(PREFIX)_mlpke.o $(PREFIX)_otse.o $(PREFIX)_hpke.o $(PREFIX)_challenge.o sha224-256.o fastrandombytes.o gaussian.o
+$(PREFIX)_api_EXTRA       = $(PREFIX)_serialize.o $(PREFIX)_voting.o $(PREFIX)_shuffle.o $(PREFIX)_hpke.o $(PREFIX)_commit.o $(PREFIX)_mlpke.o $(PREFIX)_otse.o sha224-256.o fastrandombytes.o $(PREFIX)_lin_proof.o $(PREFIX)_bin_proof.o $(PREFIX)_challenge.o $(PREFIX)_enc_proof.o gaussian.o
 $(PREFIX)_serialize_EXTRA = $(PREFIX)_voting.o $(PREFIX)_shuffle.o $(PREFIX)_hpke.o $(PREFIX)_commit.o $(PREFIX)_mlpke.o $(PREFIX)_otse.o sha224-256.o fastrandombytes.o $(PREFIX)_lin_proof.o $(PREFIX)_bin_proof.o $(PREFIX)_challenge.o $(PREFIX)_enc_proof.o gaussian.o
 
 .PHONY: all build test bench run clean help shared $(TARGETS)
@@ -41,7 +42,7 @@ LIB_SONAME  = $(LIB_NAME).$(LIB_VERSION)
 LIB_OBJS    = $(addsuffix .pic.o, \
 	$(PREFIX)_utils $(PREFIX)_crt $(PREFIX)_mlpke $(PREFIX)_otse $(PREFIX)_hpke \
 	$(PREFIX)_commit $(PREFIX)_challenge $(PREFIX)_lin_proof $(PREFIX)_bin_proof \
-	$(PREFIX)_enc_proof $(PREFIX)_shuffle $(PREFIX)_voting $(PREFIX)_serialize \
+	$(PREFIX)_enc_proof $(PREFIX)_shuffle $(PREFIX)_voting $(PREFIX)_serialize $(PREFIX)_api \
 	sha224-256 fastrandombytes gaussian randombytes cpucycles)
 
 ## all:   build every binary (does not run anything)

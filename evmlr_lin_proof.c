@@ -175,6 +175,8 @@ void evmlr_lin_proof_ctx_init(evmlr_lin_proof_ctx_t ctx, slong k, slong m) {
     ctx->sample_mask = evmlr_lin_sample_mask_binomial;
     ctx->rejection_check = evmlr_lin_rejection_check_binomial;
     ctx->norm_check = evmlr_lin_norm_check_binomial;
+    ctx->label = NULL;
+    ctx->label_len = 0;
 }
 
 void evmlr_lin_proof_ctx_set_linear(evmlr_lin_proof_ctx_t ctx, slong beta) {
@@ -255,6 +257,9 @@ int evmlr_lin_prove(evmlr_lin_proof_t proof,
  
         evmlr_challenge_t chal;
         evmlr_challenge_init(chal);
+        if (ctx->label_len > 0) {
+            evmlr_challenge_add_bytes(chal, ctx->label, ctx->label_len);
+        }
         evmlr_challenge_add_matrix(chal, A);
         evmlr_challenge_add_matrix(chal, t);
         evmlr_challenge_add_matrix(chal, proof->w);
@@ -329,6 +334,9 @@ int evmlr_lin_verify(const evmlr_lin_proof_t proof,
 
     evmlr_challenge_t chal;
     evmlr_challenge_init(chal);
+    if (ctx->label_len > 0) {
+        evmlr_challenge_add_bytes(chal, ctx->label, ctx->label_len);
+    }
     evmlr_challenge_add_matrix(chal, A);
     evmlr_challenge_add_matrix(chal, t);
     evmlr_challenge_add_matrix(chal, proof->w);

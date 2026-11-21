@@ -15,6 +15,9 @@ typedef evmlr_enc_proof_struct evmlr_enc_proof_t[1];
 void evmlr_enc_proof_init(evmlr_enc_proof_t proof, slong L_curr);
 void evmlr_enc_proof_clear(evmlr_enc_proof_t proof);
 
+/* label (label_len bytes, may be empty) is hashed into both Fiat-Shamir
+ * challenges, binding the proof to a context such as an election and a
+ * voter: a proof made under one label does not verify under another. */
 void evmlr_enc_proof_prove(evmlr_enc_proof_t proof,
                            const evmlr_mlpke_pk_t pk,
                            const evmlr_otse_ctx_t otse_ctx,
@@ -26,14 +29,36 @@ void evmlr_enc_proof_prove(evmlr_enc_proof_t proof,
                            const nmod_poly_mat_t d_dagger,
                            const nmod_poly_mat_t plaintext,
                            slong L_in,
-                           slong L_max);
+                           slong L_max,
+                           const uint8_t* label,
+                           size_t label_len);
 
 int evmlr_enc_proof_verify(const evmlr_enc_proof_t proof,
                            const evmlr_mlpke_pk_t pk,
                            const evmlr_otse_ctx_t otse_ctx,
                            const evmlr_hpke_cipher_t cipher,
                            const nmod_poly_mat_t decrypted_plaintext,
-                           slong L_max);
+                           slong L_max,
+                           const uint8_t* label,
+                           size_t label_len);
+
+/* Only the first half of evmlr_enc_proof_verify: that the ML-PKE ciphertexts
+ * encrypt a binary OTSE key under pk. It needs neither the plaintext nor a
+ * secret key, so anyone can run it on a ballot as soon as it is cast. */
+int evmlr_enc_proof_verify_hpke(const evmlr_enc_proof_t proof,
+                                const evmlr_mlpke_pk_t pk,
+                                const evmlr_hpke_cipher_t cipher,
+                                const uint8_t* label,
+                                size_t label_len);
+
+/* The second half: that the OTSE ciphertext encrypts decrypted_plaintext
+ * (whose row count is the message length). Needs the decryption. */
+int evmlr_enc_proof_verify_otse(const evmlr_enc_proof_t proof,
+                                const evmlr_otse_ctx_t otse_ctx,
+                                const evmlr_hpke_cipher_t cipher,
+                                const nmod_poly_mat_t decrypted_plaintext,
+                                const uint8_t* label,
+                                size_t label_len);
 
 void evmlr_enc_proof_copy(evmlr_enc_proof_t dest, const evmlr_enc_proof_t src);
 

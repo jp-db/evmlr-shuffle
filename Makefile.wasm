@@ -17,7 +17,7 @@
 #   make -f Makefile.wasm test       # run every test suite under Node
 #   make -f Makefile.wasm bench      # run the benchmarks under Node
 #   make -f Makefile.wasm lib        # only wasm/build/evmlr.mjs + evmlr.wasm
-#   make -f Makefile.wasm demo       # cast and count a small election via the library
+#   make -f Makefile.wasm demo       # a small election, party by party, via the library
 #   make -f Makefile.wasm clean
 #
 # Objects go to wasm/build, so they never mix with the native *.o files.
@@ -52,18 +52,20 @@ LDFLAGS = $(OPT) -sALLOW_MEMORY_GROWTH=1 -sSTACK_SIZE=8MB -sINITIAL_MEMORY=64MB
 NODE_LDFLAGS = $(LDFLAGS) -sENVIRONMENT=node -sEXIT_RUNTIME=1
 
 # The library: an ES module exporting a factory, for browsers, workers and Node.
-LIB_FUNCS  = param setup election_free has_sk cast ballot_free ballot_voter count strerror
-LIB_FUNCS += export_pp import_pp export_sk import_sk export_ballot import_ballot verify_counting
+# It exports the byte-string API of evmlr_api.h as is; wasm/evmlr.mjs wraps it.
+# Voter ids are int64_t: Emscripten passes them to and from JS as BigInt.
+LIB_FUNCS  = bytes_free strerror modulus vote_len keygen params params_info cast check_ballot
+LIB_FUNCS += first_batch mix mix_info transcript verify results
 comma := ,
 empty :=
 space := $(empty) $(empty)
-LIB_EXPORTS = $(subst $(space),$(comma),$(strip $(LIB_FUNCS:%=_evmlr_wasm_%) _malloc _free))
+LIB_EXPORTS = $(subst $(space),$(comma),$(strip $(LIB_FUNCS:%=_evmlr_%) _malloc _free))
 LIB_LDFLAGS = $(LDFLAGS) -sMODULARIZE=1 -sEXPORT_ES6=1 -sEXPORT_NAME=createEvmlrModule \
 	-sENVIRONMENT=web,worker,node \
-	-sEXPORTED_FUNCTIONS=$(LIB_EXPORTS) -sEXPORTED_RUNTIME_METHODS=HEAPU8,HEAPU32,HEAP32,UTF8ToString
+	-sEXPORTED_FUNCTIONS=$(LIB_EXPORTS) -sEXPORTED_RUNTIME_METHODS=HEAPU8,HEAPU16,HEAPU32,HEAP32,UTF8ToString
 
 PREFIX  = evmlr
-TARGETS = mlpke commit otse hpke shuffle lin_proof lin_comp bin_proof voting enc_proof serialize
+TARGETS = mlpke commit otse hpke shuffle lin_proof lin_comp bin_proof voting enc_proof serialize api
 JS_BINS = $(TARGETS:%=$(B)/$(PREFIX)_%.js)
 LIB     = $(B)/evmlr.mjs
 
@@ -81,9 +83,10 @@ $(PREFIX)_lin_comp_EXTRA  = sha224-256.o $(PRG_OBJS) $(PREFIX)_challenge.o
 $(PREFIX)_bin_proof_EXTRA = sha224-256.o $(PRG_OBJS) $(PREFIX)_commit.o $(PREFIX)_challenge.o $(GAUSS_OBJS)
 $(PREFIX)_voting_EXTRA    = $(PREFIX)_shuffle.o $(PREFIX)_hpke.o $(PREFIX)_commit.o $(PREFIX)_mlpke.o $(PREFIX)_otse.o sha224-256.o $(PRG_OBJS) $(PREFIX)_lin_proof.o $(PREFIX)_bin_proof.o $(PREFIX)_challenge.o $(PREFIX)_enc_proof.o $(GAUSS_OBJS)
 $(PREFIX)_enc_proof_EXTRA = $(PREFIX)_lin_proof.o $(PREFIX)_mlpke.o $(PREFIX)_otse.o $(PREFIX)_hpke.o $(PREFIX)_challenge.o sha224-256.o $(PRG_OBJS) $(GAUSS_OBJS)
+$(PREFIX)_api_EXTRA       = $(PREFIX)_serialize.o $(PREFIX)_voting.o $(PREFIX)_shuffle.o $(PREFIX)_hpke.o $(PREFIX)_commit.o $(PREFIX)_mlpke.o $(PREFIX)_otse.o sha224-256.o $(PRG_OBJS) $(PREFIX)_lin_proof.o $(PREFIX)_bin_proof.o $(PREFIX)_challenge.o $(PREFIX)_enc_proof.o $(GAUSS_OBJS)
 $(PREFIX)_serialize_EXTRA = $(PREFIX)_voting.o $(PREFIX)_shuffle.o $(PREFIX)_hpke.o $(PREFIX)_commit.o $(PREFIX)_mlpke.o $(PREFIX)_otse.o sha224-256.o $(PRG_OBJS) $(PREFIX)_lin_proof.o $(PREFIX)_bin_proof.o $(PREFIX)_challenge.o $(PREFIX)_enc_proof.o $(GAUSS_OBJS)
 
-LIB_OBJS = $(addprefix $(B)/, wasm_evmlr_wasm.o $($(PREFIX)_voting_EXTRA) $(PREFIX)_voting.o $(PREFIX)_serialize.o $(COMMON_OBJS))
+LIB_OBJS = $(addprefix $(B)/, $(PREFIX)_api.o $($(PREFIX)_api_EXTRA) $(COMMON_OBJS))
 
 .PHONY: all lib bins test bench demo clean check-deps
 
@@ -105,7 +108,7 @@ bench: $(JS_BINS)
 		echo "=== $$b ==="; $(NODE) $$b bench || fail=1; \
 	done; exit $$fail
 
-## demo: setup, cast and count through the JS library (wasm/demo.mjs)
+## demo: an election with separate parties, through the JS library (wasm/demo.mjs)
 demo: $(LIB)
 	$(NODE) wasm/demo.mjs
 
@@ -127,9 +130,6 @@ $(LIB): $(LIB_OBJS) | check-deps
 
 $(B)/%.main.o: %.c | $(B) check-deps
 	$(EMCC) $(CFLAGS) $(DEPFLAGS) -DMAIN -c $< -o $@
-
-$(B)/wasm_%.o: wasm/%.c | $(B) check-deps
-	$(EMCC) $(CFLAGS) $(DEPFLAGS) -c $< -o $@
 
 $(B)/%.o: %.c | $(B) check-deps
 	$(EMCC) $(CFLAGS) $(DEPFLAGS) -c $< -o $@

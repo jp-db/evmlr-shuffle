@@ -90,21 +90,52 @@ build changes: the randomness source, and a portable AES in place of AES-NI.
 The Gaussian sampler compiles unchanged on WASM SIMD, so the module needs an
 engine with SIMD support (Chrome 91, Firefox 89, Safari 16.4, Node 16.4).
 
-### Serialization
+### Running an election
 
-`evmlr_serialize.h` imports and exports the public parameters, the secret
-keys, ballots with their proofs of correct encryption, proofs of shuffle,
-and counting transcripts. The bytes are platform-independent: a ballot cast
-in the browser build verifies in the native one. `make serialize` runs its
-tests; the format is described in
+Each party runs only its own step, and only bytes pass between them:
+
+1. every mixing server generates its own key pair and publishes the public
+   key (`evmlr_voting_keygen`);
+2. the public parameters are built from the election id and the k public
+   keys (`evmlr_voting_pp_init`). The OTSE matrices and the shuffle's
+   commitment key are expanded from hashes, so nobody chooses them;
+3. voters cast ballots; the bulletin board accepts a ballot only if
+   `evmlr_voting_check_ballot` holds. The proofs are bound to the election id
+   and the voter id, so a ballot copied under another voter id, or replayed
+   in another election, is refused;
+4. server j = 0, ..., k − 1 in turn runs `evmlr_voting_mix_step` with its own
+   key: it decrypts its layer, drops every ciphertext whose proof of
+   encryption fails (publishing which and why), shuffles the rest and proves
+   the shuffle. It hands a batch to server j + 1 and publishes a mix record;
+5. anyone checks the k mix records against the board
+   (`evmlr_voting_verify_counting`).
+
+`evmlr_voting_setup` and `evmlr_voting_counting_transcript` still run all of
+this in one process with every key, for tests and benchmarks only.
+
+Voter authentication and eligibility are out of scope: they belong to the
+application that uses the library. The library takes the voter id it is
+given, binds it into the ballot's proofs and applies the revote policy to it
+(the last valid ballot of each id counts), but it does not check who may
+post under an id. The bulletin board must authenticate voters before it
+accepts a ballot; anyone it lets post under an id can replace that voter's
+ballot with a valid one of their own.
+
+### Integration with an application
+
+`evmlr_api.h` is the entry point for an external application: a C ABI on
+byte strings, with no FLINT types in the header, one function per party and
+step (`evmlr_keygen`, `evmlr_params`, `evmlr_cast`, `evmlr_check_ballot`,
+`evmlr_first_batch`, `evmlr_mix`, `evmlr_mix_info`, `evmlr_transcript`,
+`evmlr_verify`, `evmlr_results`). `make shared` builds it into `libevmlr.so`;
+the WebAssembly module exports the same functions, and `wasm/evmlr.mjs` wraps
+them for JavaScript. `make api` runs an election through it end to end.
+
+`evmlr_serialize.h` defines the bytes: public parameters, a server's public
+key and key pair, ballots, the batches servers hand on, mix records and
+counting transcripts. They are platform-independent: a ballot cast in the
+browser build verifies in the native one. The format is described in
 [wasm/README.md](wasm/README.md#serialization-format).
-
-`evmlr_voting_counting_transcript` publishes every server's proof of
-shuffle, and `evmlr_voting_verify_counting` lets anyone check a count from
-the public parameters, the ballots and that transcript. The shuffle's
-commitment key is derived from a hash of the public parameters, so the
-servers that prove the shuffle cannot choose it
-([details](wasm/README.md#verifiable-counting)).
 
 To tweak the parameters of the schemes, mainly the number of messages, you can
 modify `evmlr_params.h` in the root directory. Header dependencies are tracked,
@@ -112,6 +143,49 @@ so editing it rebuilds everything that depends on it.
 
 ## TODO
 
+- [ ] **The inner-layer proofs of encryption deanonymise every ballot.** A
+      ballot publishes a proof for each of its k layers, and each mix record
+      publishes the server's outputs, which are the next layer's ciphertexts.
+      The ML-PKE half of a ballot's layer-j proof verifies against exactly one
+      of server j − 1's outputs, and its OTSE half against exactly one of
+      server j's: anyone holding the board and the transcript can follow
+      every ballot through every shuffle to its vote (checked: with 4 ballots
+      and 2 servers, all 4 voters are linked to their votes). This predates
+      the mix-step API, which carries the proofs the way counting always did.
+
+      The paper does not have this problem, because it builds the proofs
+      differently (Section 3.3 and the proof sizes in Section 5):
+      - a voter gives *one* proof of knowledge that the outermost ciphertext
+        is a correct layered encryption of some plaintext. The relations of
+        every layer are inside that proof, and the inner ciphertexts are part
+        of the witness, never public statements. Here each layer has its own
+        proof, whose statement is that layer's ciphertext and, for the OTSE
+        half, its plaintext (t = c − m);
+      - the servers check all users' proofs before any decryption starts,
+        and the proofs "can be deleted once the servers have verified them";
+        nothing about an inner layer is checked, or carried, later;
+      - each server publishes a proof of correct decryption (below), which
+        together with the proof of shuffle is what makes the count
+        verifiable. The voters' proofs only protect the servers' keys from
+        malformed ciphertexts.
+
+      So the fix is the paper's construction: a single proof over committed
+      inner ciphertexts (the paper uses LaZer for it, 322 KB per voter with 4
+      servers), checked in full by every server at the start, and inner
+      proofs no longer in ballots, batches or rejections at inner servers.
+      The paper's proof of correct encryption also proves the rounding
+      d = ⌈H s̄⌋ of each layer, which the current one does not.
+- [ ] Prove correct decryption (Section 3.3 of the paper): each server
+      proves knowledge of its secret key, the decryption of every seed s̄_i,
+      and the rounding of H s̄_i into d_i. The proof of shuffle shows that a
+      server's outputs are a permutation of its inputs under the OTSE keys it
+      committed to, but not that those are the keys its ML-PKE ciphertexts
+      encrypt. For the same reason a rejection for a failed OTSE proof, which
+      needs the decryption, cannot be checked by others (a rejection for the
+      ML-PKE proof at server 0 can, and `evmlr_voting_verify_counting` does).
+- [ ] Mix a single remaining ciphertext. The proof of shuffle needs N >= 2,
+      so `evmlr_voting_mix_step` returns `EVMLR_VOTING_ERR_TOO_FEW` when one
+      is left (which a shuffle could not hide anyway).
 - [ ] Optimize the implementation for performance. Multiplication in R_q now
       uses the CRT decomposition (`evmlr_crt.c`); the remaining headroom is in
       keeping operands in the split representation between operations instead

@@ -1,87 +1,90 @@
-// End-to-end check of the WebAssembly library under Node:
+// An election under Node, through the WebAssembly library, with every party
+// separate and only bytes between them:
 //   make -f Makefile.wasm lib && node wasm/demo.mjs
 //
-// Separate handles stand for the parties, and only bytes pass between them:
-// the authority runs setup, the voters cast from the public parameters
-// alone, the counter imports parameters, keys and ballots and publishes a
-// transcript, and an auditor checks the count from public data only.
-// Mirrors test_voting_protocol in evmlr_voting.c: voter 2 votes twice and
-// only the second vote counts.
+//   - three mixing servers each generate their own key pair;
+//   - the authority builds the public parameters from the public keys only;
+//   - voters cast (voter 2 votes twice; the second vote counts);
+//   - the bulletin board checks every ballot, and refuses one copied under
+//     another voter id;
+//   - the servers mix one after the other, each with its own key, each
+//     checking that its input is what the previous server published;
+//   - an auditor checks the count from public data.
 import { loadEvmlr, EvmlrError } from './evmlr.mjs';
 
 const evmlr = await loadEvmlr();
 const ms = (t) => `${(performance.now() - t).toFixed(0)} ms`;
-console.log('params', evmlr.params);
+const expectError = (what, fn) => {
+  try {
+    fn();
+  } catch (e) {
+    if (!(e instanceof EvmlrError)) throw e;
+    console.log(`${what} refused: ${e.message}`);
+    return true;
+  }
+  console.log(`MISMATCH: ${what} accepted`);
+  return false;
+};
+let ok = true;
+console.log(`q = ${evmlr.modulus}, ${evmlr.voteLen} coefficients per vote`);
 
-// Authority
+// Servers: each on its own, keeping its key pair.
+const K = 3;
 let t = performance.now();
-const authority = evmlr.setup(3);
-const ppBytes = authority.exportParams();
-const skBytes = authority.exportKeys();
-authority.free();
-console.log(`setup (3 servers): ${ms(t)}; public parameters ${ppBytes.length} B, keys ${skBytes.length} B`);
+const servers = Array.from({ length: K }, () => evmlr.keygen());
+console.log(`keygen x${K}: ${ms(t)}; public key ${servers[0].publicKey.length} B, key pair ${servers[0].keyPair.length} B`);
 
-// Voters: public parameters only
-const voterView = evmlr.importParams(ppBytes);
-console.log('voter page holds keys?', voterView.hasKeys);
-const casts = [[1, 10], [2, 99], [3, 30], [2, 20], [4, 40], [5, 50]];
-const ballotBytes = [];
-for (const [voter, vote] of casts) {
+// Authority: public keys in, public parameters out.
+const electionId = await evmlr.electionId('evmlr demo election');
+const pp = evmlr.params(electionId, servers.map((s) => s.publicKey));
+console.log(`parameters: ${pp.length} B, ${evmlr.paramsInfo(pp).servers} servers`);
+
+// Voters, and the bulletin board.
+const board = [];
+for (const [voter, vote] of [[1, 10], [2, 99], [3, 30], [2, 20], [4, 40], [5, 50]]) {
   t = performance.now();
-  const ballot = voterView.cast(voter, vote);
-  ballotBytes.push(ballot.toBytes());
-  ballot.free();
-  console.log(`cast voter ${voter} -> ${vote}: ${ms(t)}, ${ballotBytes.at(-1).length} B`);
-}
-voterView.free();
-
-// Counter
-const counter = evmlr.importParams(ppBytes);
-counter.importKeys(skBytes);
-
-// A damaged ballot is refused at import, before any proof is checked.
-const damaged = ballotBytes[0].slice(0, -1);
-try {
-  counter.importBallot(damaged);
-  console.log('MISMATCH: truncated ballot accepted');
-  process.exit(1);
-} catch (e) {
-  if (!(e instanceof EvmlrError)) throw e;
-  console.log('truncated ballot refused:', e.message);
+  const ballot = evmlr.cast(pp, voter, vote);
+  const who = evmlr.checkBallot(pp, ballot);
+  ok &&= who === voter;
+  board.push(ballot);
+  console.log(`voter ${voter} casts ${vote}: ${ms(t)}, ${ballot.length} B, accepted`);
 }
 
-const ballots = ballotBytes.map((b) => counter.importBallot(b));
-t = performance.now();
-const { tally, transcript } = counter.countWithTranscript(ballots);
-console.log(`count: ${ms(t)}; transcript ${transcript.length} B`);
+// Someone resubmits voter 1's ballot under voter 6's id (the voter id is the
+// u64 right after the 20-byte header).
+const copy = board[0].slice();
+copy[20] = 6;
+ok &&= expectError('ballot copied under voter 6', () => evmlr.checkBallot(pp, copy));
+ok &&= expectError('truncated ballot', () => evmlr.checkBallot(pp, board[0].slice(0, -1)));
+
+// Mixing: server j takes the batch server j - 1 handed on, with its record.
+let batch = evmlr.firstBatch(pp, board);
+const mixes = [];
+for (let j = 0; j < K; j++) {
+  t = performance.now();
+  const step = evmlr.mix(pp, servers[j].keyPair, batch, j > 0 ? mixes[j - 1] : null);
+  const info = evmlr.mixInfo(pp, step.mix);
+  console.log(`server ${j}: ${ms(t)}; ${info.received} in, ${info.passedOn} out, rejected ${JSON.stringify(info.rejected)}; record ${step.mix.length} B`);
+  mixes.push(step.mix);
+  batch = step.batch;
+}
+ok &&= expectError('mixing with another server\'s key', () => evmlr.mix(pp, servers[1].keyPair, evmlr.firstBatch(pp, board)));
+const tally = evmlr.results(pp, batch).map((v) => v[0]);
 console.log('tally (shuffled):', tally);
-ballots.forEach((b) => b.free());
-counter.free();
 
-// Auditor: public parameters, ballots and transcript; no keys.
-const auditor = evmlr.importParams(ppBytes);
-const audited = ballotBytes.map((b) => auditor.importBallot(b));
+// Auditor: parameters, board and the records; no keys.
+const transcript = evmlr.transcript(pp, mixes);
 t = performance.now();
-const verified = auditor.verifyCounting(audited, transcript);
-console.log(`audit: ${ms(t)}; verified tally:`, verified);
+const verified = evmlr.verify(pp, board, transcript).map((v) => v[0]);
+console.log(`audit: ${ms(t)}; transcript ${transcript.length} B; verified tally:`, verified);
 
-// A transcript with one byte of a proof changed does not verify.
 const tampered = transcript.slice();
 tampered[tampered.length - 100] ^= 1;
-let refused = false;
-try {
-  auditor.verifyCounting(audited, tampered);
-} catch (e) {
-  if (!(e instanceof EvmlrError)) throw e;
-  refused = true;
-  console.log('tampered transcript refused:', e.message);
-}
-audited.forEach((b) => b.free());
-auditor.free();
+ok &&= expectError('tampered transcript', () => evmlr.verify(pp, board, tampered));
+ok &&= expectError('count against a board missing a ballot', () => evmlr.verify(pp, board.slice(1), transcript));
 
 const expected = [10, 20, 30, 40, 50];
 const sorted = (xs) => JSON.stringify([...xs].sort((a, b) => a - b));
-const ok = sorted(tally) === JSON.stringify(expected)
-  && JSON.stringify(verified) === JSON.stringify(tally) && refused;
+ok &&= sorted(tally) === JSON.stringify(expected) && JSON.stringify(verified) === JSON.stringify(tally);
 console.log(ok ? 'OK' : `MISMATCH, expected ${expected}`);
 process.exit(ok ? 0 : 1);

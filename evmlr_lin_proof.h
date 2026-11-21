@@ -33,6 +33,12 @@ typedef struct evmlr_lin_proof_ctx_struct {
     nmod_poly_mat_struct* v_2;
     discrete_gaussian_ctx_t dg_ctx_1;
     discrete_gaussian_ctx_t dg_ctx_2;
+
+    // Domain separation for the Fiat-Shamir hash: when label_len > 0, the
+    // challenge hashes these bytes before (A, t, w). Not owned by the
+    // context; ctx_init leaves it empty.
+    const uint8_t* label;
+    size_t label_len;
 } evmlr_lin_proof_ctx_struct;
 
 typedef evmlr_lin_proof_ctx_struct evmlr_lin_proof_ctx_t[1];

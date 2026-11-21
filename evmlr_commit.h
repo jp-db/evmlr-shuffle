@@ -2,6 +2,7 @@
 #define EVMLR_SHUFFLE_EVMLR_COMMIT_H
 #include "evmlr_params.h"
 #include <stdint.h>
+#include "fastrandombytes.h"
 
 // B := \sqrt{nL + n 2 K_SIS ETA^2}
 // public_parameters pp := (K_SIS, M_LEN, ETA, B, A_1, A_2)
@@ -29,6 +30,10 @@ void evmlr_commit_ctx_init(evmlr_commit_ctx_t ctx, slong N, flint_rand_t state);
 // 32-byte seed (AES-256-CTR, the same bytes on every platform), so that no
 // party chooses the key and anyone can recompute it.
 void evmlr_commit_ctx_init_seeded(evmlr_commit_ctx_t ctx, slong N, const uint8_t seed[32]);
+
+// Fills mat with coefficients uniform mod its modulus, read from prg.
+// Deterministic: the same seed gives the same matrix on every platform.
+void evmlr_expand_uniform_mat(nmod_poly_mat_t mat, prg_t *prg);
 void evmlr_commit_ctx_clear(evmlr_commit_ctx_t ctx);
 
 // Initialises a commitment. The caller owns it and must clear it with

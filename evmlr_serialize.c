@@ -1,4 +1,5 @@
 #include "evmlr_serialize.h"
+#include "evmlr_utils.h"
 
 #include <stdint.h>
 #include <stdlib.h>
@@ -337,6 +338,8 @@ const char *evmlr_ser_strerror(int status) {
         case EVMLR_SER_ERR_TRAILING:   return "trailing bytes after the object";
         case EVMLR_SER_ERR_NOMEM:      return "out of memory";
         case EVMLR_SER_ERR_ARG:        return "invalid argument";
+        case EVMLR_SER_ERR_KEY:        return "key does not match";
+        case EVMLR_SER_ERR_INVALID:    return "does not verify";
         default:                       return "unknown error";
     }
 }
@@ -403,79 +406,154 @@ static uint64_t voting_L_max(uint64_t k) {
 
 int evmlr_serialize_pp(evmlr_buf_t *out, const evmlr_voting_pp_t pp) {
     writer_t w = { out, 0 };
-    const evmlr_otse_ctx_struct *otse = pp->hpke_ctx->otse_ctx;
-    const evmlr_shuffle_ctx_struct *shuf = pp->shuf_ctx;
 
-    if (pp->k < 1 || pp->L_max != (slong) voting_L_max((uint64_t) pp->k) || otse->L != pp->L_max
-        || shuf->L != pp->L_max
-        || shuf->com_ctx->N != evmlr_shuffle_com_len(shuf->N, shuf->L)) {
+    if (pp->k < 1 || pp->L_max != (slong) voting_L_max((uint64_t) pp->k)) {
         return EVMLR_SER_ERR_ARG;
     }
     put_header(&w, EVMLR_SER_PP);
+    put_bytes(&w, pp->election_id, EVMLR_ELECTION_ID_LEN);
     put_u32(&w, (uint64_t) pp->k);
-    put_u32(&w, (uint64_t) shuf->N);
-    put_mat(&w, otse->H);
-    put_mat_block(&w, otse->H_prime, 0, 0, otse->L, K_LWE);
     for (slong j = 0; j < pp->k; j++) {
         put_mat(&w, pp->pks[j]->A);
         put_mat(&w, pp->pks[j]->t);
     }
-    /* The shuffle's commitment key is derived from the rest (see
-     * evmlr_voting_shuffle_ctx_init), so it is not encoded. */
+    /* The OTSE matrices are derived from the election id and k (see
+     * evmlr_voting_pp_init), so they are not encoded. */
     return w.err;
+}
+
+static void pk_init(evmlr_mlpke_pk_struct *pk) {
+    nmod_poly_mat_init(pk->A, K_LWE, K_LWE, MOD_Q);
+    nmod_poly_mat_init(pk->t, K_LWE, 1, MOD_Q);
+}
+
+static void pk_clear(evmlr_mlpke_pk_struct *pk) {
+    nmod_poly_mat_clear(pk->A);
+    nmod_poly_mat_clear(pk->t);
 }
 
 int evmlr_deserialize_pp(evmlr_voting_pp_t pp, const uint8_t *in, size_t len) {
     reader_t r = open_reader(in, len, EVMLR_SER_PP);
-    uint64_t k, N, L, polys;
+    uint8_t id[EVMLR_ELECTION_ID_LEN];
     evmlr_mlpke_pk_t *pks;
+    uint64_t k;
 
+    if (need(&r, sizeof(id))) {
+        memcpy(id, r.p, sizeof(id));
+        r.p += sizeof(id);
+        r.left -= sizeof(id);
+    }
     k = get_u32(&r);
-    N = get_u32(&r);
     if (r.err) {
         return r.err;
     }
-    if (k < 1 || k > MAX_SERVERS || N < 1 || N > MAX_MESSAGES) {
+    if (k < 1 || k > MAX_SERVERS) {
         return EVMLR_SER_ERR_SHAPE;
     }
-    L = voting_L_max(k);
     /* Every polynomial takes at least its 2-byte length. */
-    polys = (K_LWE + L) * K_LWR + L * K_LWE + k * (K_LWE * K_LWE + K_LWE);
-    if (polys > r.left / 2) {
+    if (k * (K_LWE * K_LWE + K_LWE) > r.left / 2) {
         return EVMLR_SER_ERR_TRUNCATED;
     }
-
     pks = (evmlr_mlpke_pk_t *) malloc((size_t) k * sizeof(evmlr_mlpke_pk_t));
     if (pks == NULL) {
         return EVMLR_SER_ERR_NOMEM;
     }
-    pp->k = (slong) k;
-    pp->L_max = (slong) L;
-    pp->pks = pks;
-    evmlr_hpke_ctx_init_empty(pp->hpke_ctx, (slong) L);
     for (uint64_t j = 0; j < k; j++) {
-        nmod_poly_mat_init(pks[j]->A, K_LWE, K_LWE, MOD_Q);
-        nmod_poly_mat_init(pks[j]->t, K_LWE, 1, MOD_Q);
+        pk_init(pks[j]);
     }
-
-    get_mat(&r, pp->hpke_ctx->otse_ctx->H);
-    /* H' = (H'' | I_L); only H'' is encoded. */
-    get_mat_block(&r, pp->hpke_ctx->otse_ctx->H_prime, 0, 0, (slong) L, K_LWE);
     for (uint64_t j = 0; j < k && !r.err; j++) {
         get_mat(&r, pks[j]->A);
         get_mat(&r, pks[j]->t);
     }
-    if (close_reader(&r)) {
-        for (uint64_t j = 0; j < k; j++) {
-            nmod_poly_mat_clear(pks[j]->A);
-            nmod_poly_mat_clear(pks[j]->t);
-        }
-        free(pks);
-        evmlr_hpke_ctx_clear(pp->hpke_ctx);
+    if (!close_reader(&r)) {
+        evmlr_voting_pp_init(pp, id, (slong) k, (const evmlr_mlpke_pk_t *) pks);
+    }
+    for (uint64_t j = 0; j < k; j++) {
+        pk_clear(pks[j]);
+    }
+    free(pks);
+    return r.err;
+}
+
+/* ---------------------------------------------------------------------------
+ * A server's keys
+ * ------------------------------------------------------------------------- */
+
+int evmlr_serialize_pk(evmlr_buf_t *out, const evmlr_mlpke_pk_t pk) {
+    writer_t w = { out, 0 };
+
+    put_header(&w, EVMLR_SER_PK);
+    put_mat(&w, pk->A);
+    put_mat(&w, pk->t);
+    return w.err;
+}
+
+int evmlr_deserialize_pk(evmlr_mlpke_pk_t pk, const uint8_t *in, size_t len) {
+    reader_t r = open_reader(in, len, EVMLR_SER_PK);
+
+    if (r.err) {
         return r.err;
     }
-    evmlr_voting_shuffle_ctx_init(pp->shuf_ctx, pp, (slong) N);
-    return EVMLR_SER_OK;
+    pk_init(pk);
+    get_mat(&r, pk->A);
+    get_mat(&r, pk->t);
+    if (close_reader(&r)) {
+        pk_clear(pk);
+    }
+    return r.err;
+}
+
+int evmlr_serialize_keypair(evmlr_buf_t *out, const evmlr_mlpke_keypair_t kp) {
+    writer_t w = { out, 0 };
+
+    put_header(&w, EVMLR_SER_KEYPAIR);
+    put_mat(&w, kp->sk->s);
+    put_mat(&w, kp->pk->A);
+    put_mat(&w, kp->pk->t);
+    return w.err;
+}
+
+/* Whether s is the secret of (A, t): e = t - A s, and s itself, must be
+ * small, as keygen samples them from B_ETA. */
+static int keypair_consistent(const evmlr_mlpke_keypair_struct *kp) {
+    evmlr_mlpke_ctx_t ctx;
+    nmod_poly_mat_t e;
+    int ok = 1;
+
+    evmlr_mlpke_ctx_init(ctx);
+    nmod_poly_mat_init(e, K_LWE, 1, MOD_Q);
+    nmod_poly_mat_mulmod(e, kp->pk->A, kp->sk->s, ctx->cyclo_poly);
+    nmod_poly_mat_sub(e, kp->pk->t, e);
+    for (slong i = 0; i < K_LWE && ok; i++) {
+        const nmod_poly_struct *ei = nmod_poly_mat_entry(e, i, 0), *si = nmod_poly_mat_entry(kp->sk->s, i, 0);
+        for (slong c = 0; c < DEGREE_N && ok; c++) {
+            ulong x = nmod_poly_get_coeff_ui(ei, c), y = nmod_poly_get_coeff_ui(si, c);
+            ok = (x <= ETA || x >= MOD_Q - ETA) && (y <= ETA || y >= MOD_Q - ETA);
+        }
+    }
+    nmod_poly_mat_clear(e);
+    evmlr_mlpke_ctx_clear(ctx);
+    return ok;
+}
+
+int evmlr_deserialize_keypair(evmlr_mlpke_keypair_t kp, const uint8_t *in, size_t len) {
+    reader_t r = open_reader(in, len, EVMLR_SER_KEYPAIR);
+
+    if (r.err) {
+        return r.err;
+    }
+    nmod_poly_mat_init(kp->sk->s, K_LWE, 1, MOD_Q);
+    pk_init(kp->pk);
+    get_mat(&r, kp->sk->s);
+    get_mat(&r, kp->pk->A);
+    get_mat(&r, kp->pk->t);
+    if (!close_reader(&r) && !keypair_consistent(kp)) {
+        r.err = EVMLR_SER_ERR_KEY;
+    }
+    if (r.err) {
+        evmlr_mlpke_keypair_clear(kp);
+    }
+    return r.err;
 }
 
 /* ---------------------------------------------------------------------------
@@ -740,19 +818,223 @@ int evmlr_deserialize_shuffle_statement(evmlr_shuffle_pp_t stmt, const evmlr_shu
     return EVMLR_SER_OK;
 }
 
+/* ---------------------------------------------------------------------------
+ * Batches, mix records and transcripts
+ * ------------------------------------------------------------------------- */
+
+/* Polynomials in a proof of encryption of a layer with OTSE length L. */
+static uint64_t enc_proof_polys(uint64_t L) {
+    const uint64_t hdr = K_LWR * (K_LWE + 1);
+
+    return 3 * hdr + 2 * L + 2 * ETA * (K_LWE + L);
+}
+
+int evmlr_serialize_batch(evmlr_buf_t *out, const evmlr_voting_batch_t batch, const evmlr_voting_pp_t pp) {
+    writer_t w = { out, 0 };
+    const slong k = pp->k, nprf = k - batch->layer;
+
+    if (batch->k != k || batch->layer < 0 || batch->layer > k || batch->n < 0
+        || (batch->layer == 0 && batch->n > 0 && batch->voter_ids == NULL)) {
+        return EVMLR_SER_ERR_ARG;
+    }
+    put_header(&w, EVMLR_SER_BATCH);
+    put_u32(&w, (uint64_t) k);
+    put_u32(&w, (uint64_t) batch->layer);
+    put_u32(&w, (uint64_t) batch->n);
+    for (slong i = 0; i < batch->n && !w.err; i++) {
+        if (batch->layer == 0) {
+            put_u64(&w, (uint64_t) (int64_t) batch->voter_ids[i]);
+        }
+        put_mat(&w, batch->msgs[i]);
+        for (slong l = 0; l < nprf; l++) {
+            put_lin_proof(&w, &batch->proofs[i * nprf + l].proof_hpke);
+            put_lin_proof(&w, &batch->proofs[i * nprf + l].proof_otse);
+        }
+    }
+    return w.err;
+}
+
+int evmlr_deserialize_batch(evmlr_voting_batch_t batch, const evmlr_voting_pp_t pp, const uint8_t *in, size_t len) {
+    reader_t r = open_reader(in, len, EVMLR_SER_BATCH);
+    uint64_t k, layer, n, per_item;
+    slong nprf;
+
+    k = get_u32(&r);
+    layer = get_u32(&r);
+    n = get_u32(&r);
+    if (r.err) {
+        return r.err;
+    }
+    if (k != (uint64_t) pp->k || layer > k || n > MAX_MESSAGES) {
+        return EVMLR_SER_ERR_SHAPE;
+    }
+    nprf = (slong) (k - layer);
+    per_item = (uint64_t) evmlr_voting_msg_len((slong) k, (slong) layer);
+    for (slong l = 0; l < nprf; l++) {
+        per_item += enc_proof_polys((uint64_t) evmlr_voting_otse_len((slong) k, (slong) layer + l));
+    }
+    if (n * per_item > r.left / 2) {
+        return EVMLR_SER_ERR_TRUNCATED;
+    }
+    if (evmlr_voting_batch_init(batch, (slong) k, (slong) layer, (slong) n) != EVMLR_VOTING_OK) {
+        return EVMLR_SER_ERR_NOMEM;
+    }
+    for (slong i = 0; i < (slong) n && !r.err; i++) {
+        if (layer == 0) {
+            int64_t id = (int64_t) get_u64(&r);
+            if (!r.err && (int64_t) (slong) id != id) { /* slong is 32 bits on wasm32 */
+                r.err = EVMLR_SER_ERR_VALUE;
+            }
+            batch->voter_ids[i] = (slong) id;
+        }
+        get_mat(&r, batch->msgs[i]);
+        for (slong l = 0; l < nprf; l++) {
+            get_lin_proof(&r, &batch->proofs[i * nprf + l].proof_hpke);
+            get_lin_proof(&r, &batch->proofs[i * nprf + l].proof_otse);
+        }
+    }
+    if (close_reader(&r)) {
+        evmlr_voting_batch_clear(batch);
+    }
+    return r.err;
+}
+
+static void put_mix_body(writer_t *w, const evmlr_voting_mix_struct *mix) {
+    put_u32(w, (uint64_t) mix->k);
+    put_u32(w, (uint64_t) mix->j);
+    put_u32(w, (uint64_t) mix->n_in);
+    put_u32(w, (uint64_t) mix->n_rejected);
+    for (slong r = 0; r < mix->n_rejected; r++) {
+        put_u32(w, (uint64_t) mix->rejected[r]);
+        put_uint(w, mix->reasons[r], 1);
+    }
+    if (mix->N > 0) {
+        put_statement(w, mix->statement, mix->N);
+        put_shuffle_proof(w, mix->proof);
+    }
+}
+
+static int check_mix(const evmlr_voting_mix_struct *mix, const evmlr_voting_pp_t pp) {
+    if (mix->k != pp->k || mix->j < 0 || mix->j >= pp->k || mix->n_in < 0 || mix->n_rejected < 0
+        || mix->N != mix->n_in - mix->n_rejected || mix->N == 1
+        || (mix->n_rejected > 0 && (mix->rejected == NULL || mix->reasons == NULL))) {
+        return EVMLR_SER_ERR_ARG;
+    }
+    return EVMLR_SER_OK;
+}
+
+/* Reads a mix record into mix (all fields set, even on failure, so that
+ * evmlr_voting_mix_clear can free what was read). */
+static int read_mix_body(reader_t *r, evmlr_voting_mix_struct *mix, const evmlr_voting_pp_t pp) {
+    uint64_t k, j, n_in, n_rej, prev = 0;
+    evmlr_shuffle_ctx_struct shape;
+
+    memset(mix, 0, sizeof(*mix));
+    k = get_u32(r);
+    j = get_u32(r);
+    n_in = get_u32(r);
+    n_rej = get_u32(r);
+    if (r->err) {
+        return r->err;
+    }
+    if (k != (uint64_t) pp->k || j >= k || n_in > MAX_MESSAGES || n_rej > n_in || n_in - n_rej == 1) {
+        return r->err = EVMLR_SER_ERR_SHAPE;
+    }
+    if (n_rej > r->left / 5) {
+        return r->err = EVMLR_SER_ERR_TRUNCATED;
+    }
+    mix->k = (slong) k;
+    mix->j = (slong) j;
+    mix->n_in = (slong) n_in;
+    if (n_rej > 0) {
+        mix->rejected = (slong *) malloc((size_t) n_rej * sizeof(slong));
+        mix->reasons = (uint8_t *) malloc((size_t) n_rej);
+        if (mix->rejected == NULL || mix->reasons == NULL) {
+            return r->err = EVMLR_SER_ERR_NOMEM;
+        }
+    }
+    for (uint64_t i = 0; i < n_rej && !r->err; i++) {
+        uint64_t idx = get_u32(r), why = get_uint(r, 1);
+
+        if (r->err) {
+            break;
+        }
+        /* Strictly increasing, in range, with a known reason: one encoding. */
+        if (idx >= n_in || (i > 0 && idx <= prev)
+            || (why != EVMLR_VOTING_REJECT_HPKE && why != EVMLR_VOTING_REJECT_OTSE)) {
+            r->err = EVMLR_SER_ERR_VALUE;
+            break;
+        }
+        prev = idx;
+        mix->rejected[i] = (slong) idx;
+        mix->reasons[i] = (uint8_t) why;
+        mix->n_rejected = (slong) i + 1;
+    }
+    if (r->err) {
+        return r->err;
+    }
+    mix->N = (slong) (n_in - n_rej);
+    if (mix->N == 0) {
+        return EVMLR_SER_OK;
+    }
+    if (shuffle_polys((uint64_t) mix->N, (uint64_t) pp->L_max) > r->left / 2) {
+        mix->N = 0;
+        return r->err = EVMLR_SER_ERR_TRUNCATED;
+    }
+    shape_ctx(&shape, mix->N, pp->L_max);
+    if (read_statement(r, mix->statement, &shape)) {
+        mix->N = 0;
+        return r->err;
+    }
+    if (read_shuffle_proof(r, mix->proof, &shape)) {
+        evmlr_shuffle_pp_clear(mix->statement, &shape);
+        mix->N = 0;
+        return r->err;
+    }
+    return EVMLR_SER_OK;
+}
+
+int evmlr_serialize_mix(evmlr_buf_t *out, const evmlr_voting_mix_t mix, const evmlr_voting_pp_t pp) {
+    writer_t w = { out, 0 };
+    int st = check_mix(mix, pp);
+
+    if (st) {
+        return st;
+    }
+    put_header(&w, EVMLR_SER_MIX);
+    put_mix_body(&w, mix);
+    return w.err;
+}
+
+int evmlr_deserialize_mix(evmlr_voting_mix_t mix, const evmlr_voting_pp_t pp, const uint8_t *in, size_t len) {
+    reader_t r = open_reader(in, len, EVMLR_SER_MIX);
+
+    if (r.err) {
+        return r.err;
+    }
+    if (read_mix_body(&r, mix, pp) || close_reader(&r)) {
+        evmlr_voting_mix_clear(mix);
+    }
+    return r.err;
+}
+
 int evmlr_serialize_transcript(evmlr_buf_t *out, const evmlr_voting_transcript_t tr,
                                const evmlr_voting_pp_t pp) {
     writer_t w = { out, 0 };
 
-    if (tr->k != pp->k || tr->N < 0 || (tr->N > 0 && (tr->statements == NULL || tr->proofs == NULL))) {
+    if (tr->k != pp->k || tr->mixes == NULL) {
         return EVMLR_SER_ERR_ARG;
+    }
+    for (slong j = 0; j < tr->k; j++) {
+        int st = check_mix(&tr->mixes[j], pp);
+        if (st) {
+            return st;
+        }
     }
     put_header(&w, EVMLR_SER_TRANSCRIPT);
     put_u32(&w, (uint64_t) tr->k);
-    put_u32(&w, (uint64_t) tr->N);
-    for (slong j = 0; j < tr->k && tr->N > 0; j++) {
-        put_statement(&w, tr->statements[j], tr->N);
-        put_shuffle_proof(&w, tr->proofs[j]);
+    for (slong j = 0; j < tr->k; j++) {
+        put_mix_body(&w, &tr->mixes[j]);
     }
     return w.err;
 }
@@ -760,66 +1042,26 @@ int evmlr_serialize_transcript(evmlr_buf_t *out, const evmlr_voting_transcript_t
 int evmlr_deserialize_transcript(evmlr_voting_transcript_t tr, const evmlr_voting_pp_t pp,
                                  const uint8_t *in, size_t len) {
     reader_t r = open_reader(in, len, EVMLR_SER_TRANSCRIPT);
-    evmlr_shuffle_ctx_struct shape;
-    uint64_t k, N;
-    slong done = 0;
+    uint64_t k = get_u32(&r);
 
-    k = get_u32(&r);
-    N = get_u32(&r);
     if (r.err) {
         return r.err;
     }
     if (k != (uint64_t) pp->k) {
         return EVMLR_SER_ERR_SHAPE;
     }
-    if (N > MAX_MESSAGES) {
-        return EVMLR_SER_ERR_SHAPE;
-    }
     tr->k = (slong) k;
-    tr->N = (slong) N;
-    tr->statements = NULL;
-    tr->proofs = NULL;
-    if (N == 0) {
-        return close_reader(&r);
-    }
-    if (k * shuffle_polys(N, (uint64_t) pp->L_max) > r.left / 2) {
-        return EVMLR_SER_ERR_TRUNCATED;
-    }
-    tr->statements = (evmlr_shuffle_pp_t *) malloc((size_t) k * sizeof(evmlr_shuffle_pp_t));
-    tr->proofs = (evmlr_shuffle_proof_t *) malloc((size_t) k * sizeof(evmlr_shuffle_proof_t));
-    if (tr->statements == NULL || tr->proofs == NULL) {
-        free(tr->statements);
-        free(tr->proofs);
+    tr->mixes = (evmlr_voting_mix_struct *) calloc((size_t) k, sizeof(evmlr_voting_mix_struct));
+    if (tr->mixes == NULL) {
         return EVMLR_SER_ERR_NOMEM;
     }
-    shape_ctx(&shape, (slong) N, pp->L_max);
-    for (; done < (slong) k; done++) {
-        if (read_statement(&r, tr->statements[done], &shape)) {
-            break;
-        }
-        if (read_shuffle_proof(&r, tr->proofs[done], &shape)) {
-            evmlr_shuffle_pp_clear(tr->statements[done], &shape);
-            break;
-        }
+    for (slong j = 0; j < tr->k && !r.err; j++) {
+        read_mix_body(&r, &tr->mixes[j], pp);
     }
-    if (!r.err) {
-        close_reader(&r);
+    if (close_reader(&r)) {
+        evmlr_voting_transcript_clear(tr);
     }
-    if (r.err) {
-        /* Servers [0, done) were read completely; done is the one that failed
-         * (and freed itself), or k if only the trailing check failed. */
-        for (slong j = 0; j < done; j++) {
-            evmlr_shuffle_pp_clear(tr->statements[j], &shape);
-            evmlr_proof_clear(tr->proofs[j], &shape);
-        }
-        free(tr->statements);
-        free(tr->proofs);
-        tr->statements = NULL;
-        tr->proofs = NULL;
-        tr->N = 0;
-        return r.err;
-    }
-    return EVMLR_SER_OK;
+    return r.err;
 }
 
 #ifdef MAIN
@@ -860,7 +1102,7 @@ static int verify_outer_layer(const evmlr_voting_submission_t sub, const evmlr_v
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wstringop-overread"
 #endif
-    ok = evmlr_voting_verify_enc(pp, sub->proofs[0], sub->ballot->layer, msg, 0);
+    ok = evmlr_voting_verify_enc(pp, sub->proofs[0], sub->ballot->layer, msg, 0, sub->voter_id);
 #if defined(__GNUC__) && !defined(__clang__)
 #pragma GCC diagnostic pop
 #endif
@@ -1046,36 +1288,42 @@ static void test(flint_rand_t state) {
         evmlr_shuffle_pp_t st, st2;
         evmlr_shuffle_proof_t proof, proof2;
         evmlr_buf_t b_proof, b_st, b_again;
+        evmlr_shuffle_ctx_t ctx, ctx2;
         int ok_rt, ok_ver, ok_bad;
+
+        evmlr_voting_shuffle_ctx_init(ctx, pp, SHUFFLE_N_MSGS);
+        evmlr_voting_shuffle_ctx_init(ctx2, pp2, SHUFFLE_N_MSGS);
 
         /* Proved under the original shuffle context, verified under the one
          * imported with the public parameters. */
-        shuffle_instance(sp, st, pp->shuf_ctx, state);
-        evmlr_proof_init(proof, pp->shuf_ctx);
-        evmlr_shuffle_prove(proof, sp, st, pp->shuf_ctx, state);
+        shuffle_instance(sp, st, ctx, state);
+        evmlr_proof_init(proof, ctx);
+        evmlr_shuffle_prove(proof, sp, st, ctx, state);
 
-        ok_rt = ENCODE(b_proof, evmlr_serialize_shuffle_proof(&b_proof, proof, pp->shuf_ctx))
-             && ENCODE(b_st, evmlr_serialize_shuffle_statement(&b_st, st, pp->shuf_ctx))
-             && evmlr_deserialize_shuffle_proof(proof2, pp2->shuf_ctx, b_proof.data, b_proof.len) == EVMLR_SER_OK
-             && evmlr_deserialize_shuffle_statement(st2, pp2->shuf_ctx, b_st.data, b_st.len) == EVMLR_SER_OK;
+        ok_rt = ENCODE(b_proof, evmlr_serialize_shuffle_proof(&b_proof, proof, ctx))
+             && ENCODE(b_st, evmlr_serialize_shuffle_statement(&b_st, st, ctx))
+             && evmlr_deserialize_shuffle_proof(proof2, ctx2, b_proof.data, b_proof.len) == EVMLR_SER_OK
+             && evmlr_deserialize_shuffle_statement(st2, ctx2, b_st.data, b_st.len) == EVMLR_SER_OK;
         ok_ver = ok_bad = 0;
         if (ok_rt) {
-            ok_rt = ENCODE(b_again, evmlr_serialize_shuffle_proof(&b_again, proof2, pp2->shuf_ctx))
+            ok_rt = ENCODE(b_again, evmlr_serialize_shuffle_proof(&b_again, proof2, ctx2))
                  && same_bytes(&b_proof, &b_again);
             evmlr_buf_clear(&b_again);
-            ok_ver = evmlr_shuffle_verify(proof2, pp2->shuf_ctx, st2);
+            ok_ver = evmlr_shuffle_verify(proof2, ctx2, st2);
             /* The proof must not verify for another statement. */
             nmod_poly_set_coeff_ui(nmod_poly_mat_entry(st2->c_hat[0], 0, 0), 0,
                                    (nmod_poly_get_coeff_ui(nmod_poly_mat_entry(st2->c_hat[0], 0, 0), 0) + 1) % MOD_Q);
-            ok_bad = !evmlr_shuffle_verify(proof2, pp2->shuf_ctx, st2);
-            evmlr_proof_clear(proof2, pp2->shuf_ctx);
-            evmlr_shuffle_pp_clear(st2, pp2->shuf_ctx);
+            ok_bad = !evmlr_shuffle_verify(proof2, ctx2, st2);
+            evmlr_proof_clear(proof2, ctx2);
+            evmlr_shuffle_pp_clear(st2, ctx2);
         }
         evmlr_buf_clear(&b_proof);
         evmlr_buf_clear(&b_st);
-        evmlr_proof_clear(proof, pp->shuf_ctx);
-        evmlr_shuffle_clear_sp(sp, pp->shuf_ctx);
-        evmlr_shuffle_pp_clear(st, pp->shuf_ctx);
+        evmlr_proof_clear(proof, ctx);
+        evmlr_shuffle_clear_sp(sp, ctx);
+        evmlr_shuffle_pp_clear(st, ctx);
+        evmlr_shuffle_ctx_clear(ctx);
+        evmlr_shuffle_ctx_clear(ctx2);
         TEST_ASSERT(ok_rt && ok_ver && ok_bad, end);
     } TEST_END;
 
@@ -1121,7 +1369,7 @@ static void test(flint_rand_t state) {
             bad_order = evmlr_voting_verify_counting(NULL, tr2, (const evmlr_voting_submission_t *) some, 3, pp) == -1;
 
             /* One output of the first server changed. */
-            nmod_poly_struct *c = nmod_poly_mat_entry(tr2->statements[0]->c_hat[0], 0, 0);
+            nmod_poly_struct *c = nmod_poly_mat_entry(tr2->mixes[0].statement->c_hat[0], 0, 0);
             nmod_poly_set_coeff_ui(c, 0, (nmod_poly_get_coeff_ui(c, 0) + 1) % MOD_Q);
             bad_stmt = evmlr_voting_verify_counting(NULL, tr2, (const evmlr_voting_submission_t *) subs2, n_voters, pp) == -1;
             evmlr_voting_transcript_clear(tr2);
@@ -1141,6 +1389,108 @@ static void test(flint_rand_t state) {
         evmlr_voting_transcript_clear(tr);
         TEST_ASSERT(ok && ok_rt && verified == n_voters && same, end);
         TEST_ASSERT(bad_stmt && bad_missing && bad_order && bad_trunc, end);
+    } TEST_END;
+
+    TEST_ONCE("a server's keys round-trip, and a mismatched key pair is refused") {
+        evmlr_mlpke_keypair_t kp, kp2, other;
+        evmlr_mlpke_pk_t pk2;
+        evmlr_buf_t b_pk, b_kp, b_again;
+        int ok;
+
+        evmlr_voting_keygen(kp, state);
+        evmlr_voting_keygen(other, state);
+        ok = ENCODE(b_pk, evmlr_serialize_pk(&b_pk, kp->pk))
+          && ENCODE(b_kp, evmlr_serialize_keypair(&b_kp, kp))
+          && evmlr_deserialize_pk(pk2, b_pk.data, b_pk.len) == EVMLR_SER_OK;
+        if (ok) {
+            ok = nmod_poly_mat_equal(pk2->A, kp->pk->A) && nmod_poly_mat_equal(pk2->t, kp->pk->t);
+            nmod_poly_mat_clear(pk2->A);
+            nmod_poly_mat_clear(pk2->t);
+        }
+        if (ok && evmlr_deserialize_keypair(kp2, b_kp.data, b_kp.len) == EVMLR_SER_OK) {
+            ok = ENCODE(b_again, evmlr_serialize_keypair(&b_again, kp2)) && same_bytes(&b_kp, &b_again);
+            evmlr_buf_clear(&b_again);
+            evmlr_mlpke_keypair_clear(kp2);
+        } else {
+            ok = 0;
+        }
+        /* Another server's secret with this public key. */
+        nmod_poly_mat_swap(kp->sk->s, other->sk->s);
+        evmlr_buf_clear(&b_again);
+        ok = ok && ENCODE(b_again, evmlr_serialize_keypair(&b_again, kp))
+                && evmlr_deserialize_keypair(kp2, b_again.data, b_again.len) == EVMLR_SER_ERR_KEY;
+        evmlr_buf_clear(&b_again);
+        evmlr_buf_clear(&b_pk);
+        evmlr_buf_clear(&b_kp);
+        evmlr_mlpke_keypair_clear(kp);
+        evmlr_mlpke_keypair_clear(other);
+        TEST_ASSERT(ok, end);
+    } TEST_END;
+
+    TEST_ONCE("the parameters depend only on the election id and the public keys") {
+        evmlr_mlpke_pk_t *pks = (evmlr_mlpke_pk_t *) malloc(k * sizeof(evmlr_mlpke_pk_t));
+        evmlr_voting_pp_t pp3;
+        evmlr_buf_t b_pp3;
+        int ok;
+
+        for (slong j = 0; j < k; j++) {
+            pks[j][0] = pp->pks[j][0];
+        }
+        evmlr_voting_pp_init(pp3, pp->election_id, k, (const evmlr_mlpke_pk_t *) pks);
+        ok = ENCODE(b_pp3, evmlr_serialize_pp(&b_pp3, pp3)) && same_bytes(&b_pp, &b_pp3)
+          && nmod_poly_mat_equal(pp3->hpke_ctx->otse_ctx->H, pp->hpke_ctx->otse_ctx->H)
+          && nmod_poly_mat_equal(pp3->hpke_ctx->otse_ctx->H_prime, pp->hpke_ctx->otse_ctx->H_prime);
+        evmlr_buf_clear(&b_pp3);
+        evmlr_voting_pp_clear(pp3);
+        free(pks);
+        TEST_ASSERT(ok, end);
+    } TEST_END;
+
+    TEST_ONCE("batches and mix records round-trip between servers") {
+        evmlr_voting_batch_t in, in2, out, out2, tmp_b;
+        evmlr_voting_mix_t mix, mix2, tmp_m;
+        evmlr_mlpke_keypair_struct kp;
+        evmlr_buf_t b_in, b_out, b_mix, b_again;
+        int have_in = 0, have_in2 = 0, have_out = 0, have_out2 = 0, have_mix2 = 0, ok = 0;
+
+        evmlr_buf_init(&b_in);
+        evmlr_buf_init(&b_out);
+        evmlr_buf_init(&b_mix);
+        evmlr_buf_init(&b_again);
+        kp.sk[0] = sk->sks[0][0];
+        kp.pk[0] = pp->pks[0][0];
+        do {
+            if (evmlr_voting_batch_from_submissions(in, (const evmlr_voting_submission_t *) subs, n_voters, pp)) break;
+            have_in = 1;
+            if (evmlr_serialize_batch(&b_in, in, pp) || evmlr_deserialize_batch(in2, pp2, b_in.data, b_in.len)) break;
+            have_in2 = 1;
+            /* Server 0 mixes the batch it read from bytes, under imported parameters. */
+            if (evmlr_voting_mix_step(out, mix, in2, &kp, pp2, state)) break;
+            have_out = 1;
+            if (evmlr_serialize_batch(&b_out, out, pp2) || evmlr_serialize_mix(&b_mix, mix, pp2)) break;
+            if (evmlr_deserialize_batch(out2, pp, b_out.data, b_out.len)) break;
+            have_out2 = 1;
+            if (evmlr_deserialize_mix(mix2, pp, b_mix.data, b_mix.len)) break;
+            have_mix2 = 1;
+            if (!evmlr_voting_batch_matches_mix(out2, mix2, pp)) break;
+            if (evmlr_serialize_mix(&b_again, mix2, pp) || !same_bytes(&b_mix, &b_again)) break;
+            if (evmlr_deserialize_mix(tmp_m, pp, b_mix.data, b_mix.len - 1) != EVMLR_SER_ERR_TRUNCATED) break;
+            if (evmlr_deserialize_batch(tmp_b, pp, b_out.data, b_out.len - 1) != EVMLR_SER_ERR_TRUNCATED) break;
+            ok = 1;
+        } while (0);
+        if (have_in) evmlr_voting_batch_clear(in);
+        if (have_in2) evmlr_voting_batch_clear(in2);
+        if (have_out) {
+            evmlr_voting_batch_clear(out);
+            evmlr_voting_mix_clear(mix);
+        }
+        if (have_out2) evmlr_voting_batch_clear(out2);
+        if (have_mix2) evmlr_voting_mix_clear(mix2);
+        evmlr_buf_clear(&b_in);
+        evmlr_buf_clear(&b_out);
+        evmlr_buf_clear(&b_mix);
+        evmlr_buf_clear(&b_again);
+        TEST_ASSERT(ok, end);
     } TEST_END;
 
 end:

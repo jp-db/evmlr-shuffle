@@ -1,31 +1,38 @@
-// Thin JavaScript wrapper over the WebAssembly build (wasm/build/evmlr.mjs).
+// JavaScript wrapper over the WebAssembly build of evmlr_api.h.
 //
 //   import { loadEvmlr } from './evmlr.mjs';
 //   const evmlr = await loadEvmlr();
 //
-//   // Authority
-//   const election = evmlr.setup(3);                 // 3 mixing servers
-//   const ppBytes = election.exportParams();         // Uint8Array, public
-//   const skBytes = election.exportKeys();           // Uint8Array, secret
+//   // Each mixing server, on its own machine
+//   const { publicKey, keyPair } = evmlr.keygen();      // publish publicKey, keep keyPair
 //
-//   // Voter page: needs only the public parameters
-//   const voterView = evmlr.importParams(ppBytes);
-//   const ballotBytes = voterView.cast(1, [42]).toBytes();
+//   // Election authority: public keys in, public parameters out
+//   const id = await evmlr.electionId('Board election 2026');
+//   const pp = evmlr.params(id, [pk0, pk1, pk2]);
 //
-//   // Counting
-//   const counter = evmlr.importParams(ppBytes);
-//   counter.importKeys(skBytes);
-//   const { tally, transcript } = counter.countWithTranscript([counter.importBallot(ballotBytes)]); // [42]
+//   // Voter page
+//   const ballot = evmlr.cast(pp, voterId, candidate);
 //
-//   // Anyone: check the count from public data
-//   const auditor = evmlr.importParams(ppBytes);
-//   auditor.verifyCounting([auditor.importBallot(ballotBytes)], transcript); // [42]
+//   // Bulletin board
+//   evmlr.checkBallot(pp, ballot);                       // throws EvmlrError if invalid
 //
-// The bytes are the format of evmlr_serialize.h, the same as the native
-// build reads and writes. Casting encrypts the vote in one layer per server
-// and proves every layer; it takes seconds, so in a page run it in a Web
-// Worker. Handles own WASM memory: free() them (Election.free() does not free
-// its ballots).
+//   // Servers, in turn
+//   let batch = evmlr.firstBatch(pp, board);             // server 0's input
+//   const mixes = [];
+//   for (let j = 0; j < k; j++) {                        // server j, with its own key only
+//     const step = evmlr.mix(pp, keyPairOfServer[j], batch, mixes[j - 1] ?? null);
+//     mixes.push(step.mix);                              // publish
+//     batch = step.batch;                                // hand to server j + 1
+//   }
+//
+//   // Anyone
+//   const votes = evmlr.verify(pp, board, evmlr.transcript(pp, mixes));
+//
+// Every value is a Uint8Array in the format of evmlr_serialize.h, the same
+// bytes the native library reads and writes. A vote is a number (the first
+// coefficient) or an array of up to evmlr.voteLen coefficients mod
+// evmlr.modulus; votes come back as Uint16Arrays of voteLen coefficients.
+// Casting and mixing take seconds: in a page, run them in a Web Worker.
 import createEvmlrModule from './build/evmlr.mjs';
 
 export class EvmlrError extends Error {
@@ -36,200 +43,260 @@ export class EvmlrError extends Error {
   }
 }
 
+/** Reasons a server gives for rejecting a ciphertext (evmlr_voting_reject_t). */
+export const REJECT_REASONS = { 1: 'hpke-proof', 2: 'otse-proof' };
+
 export async function loadEvmlr(moduleArgs = {}) {
   const M = await createEvmlrModule(moduleArgs);
-  const params = {
-    q: M._evmlr_wasm_param(0),
-    n: M._evmlr_wasm_param(1),
-    kLWE: M._evmlr_wasm_param(2),
-    kLWR: M._evmlr_wasm_param(3),
+  const modulus = M._evmlr_modulus();
+  const voteLen = M._evmlr_vote_len();
+  const ERR_INVALID = 12;
+  const ERR_SPACE = 14;
+
+  // Runs fn with an allocator whose blocks are all freed afterwards. The heap
+  // can grow during a call, so M.HEAPU8 and friends are re-read every time.
+  function scoped(fn) {
+    const blocks = [];
+    const alloc = (size) => {
+      const p = M._malloc(Math.max(1, size));
+      if (!p) throw new EvmlrError('out of memory', 9);
+      blocks.push(p);
+      return p;
+    };
+    try {
+      return fn(alloc);
+    } finally {
+      for (const p of blocks) M._free(p);
+    }
+  }
+
+  function bytesIn(alloc, bytes) {
+    if (!(bytes instanceof Uint8Array)) throw new TypeError('expected a Uint8Array');
+    const p = alloc(bytes.length);
+    M.HEAPU8.set(bytes, p);
+    return p;
+  }
+
+  // An array of byte strings: [pointer array, length array].
+  function listIn(alloc, list) {
+    const ptrs = alloc(4 * list.length);
+    const lens = alloc(4 * list.length);
+    list.forEach((b, i) => {
+      const p = bytesIn(alloc, b);
+      M.HEAPU32[(ptrs >>> 2) + i] = p;
+      M.HEAPU32[(lens >>> 2) + i] = b.length;
+    });
+    return [ptrs, lens];
+  }
+
+  // An evmlr_bytes { uint8_t *data; size_t len; } (8 bytes on wasm32).
+  function bytesOut(alloc) {
+    const p = alloc(8);
+    M.HEAPU32[p >>> 2] = 0;
+    M.HEAPU32[(p >>> 2) + 1] = 0;
+    return p;
+  }
+
+  function takeBytes(p) {
+    const data = M.HEAPU32[p >>> 2];
+    const len = M.HEAPU32[(p >>> 2) + 1];
+    const out = M.HEAPU8.slice(data, data + len);
+    M._evmlr_bytes_free(p);
+    return out;
+  }
+
+  function check(what, status) {
+    if (status !== 0) {
+      throw new EvmlrError(`${what}: ${M.UTF8ToString(M._evmlr_strerror(status))}`, status);
+    }
+  }
+
+  function voteIn(alloc, vote) {
+    const coeffs = typeof vote === 'number' ? [vote] : Array.from(vote);
+    if (coeffs.length > voteLen) throw new RangeError(`a vote has at most ${voteLen} coefficients`);
+    for (const c of coeffs) {
+      if (!Number.isInteger(c) || c < 0 || c >= modulus) throw new RangeError(`vote coefficients are integers in [0, ${modulus})`);
+    }
+    const p = alloc(2 * coeffs.length);
+    M.HEAPU16.set(coeffs, p >>> 1);
+    return [p, coeffs.length];
+  }
+
+  function votesOut(p, count) {
+    const votes = [];
+    for (let i = 0; i < count; i++) {
+      votes.push(M.HEAPU16.slice((p >>> 1) + i * voteLen, (p >>> 1) + (i + 1) * voteLen));
+    }
+    return votes;
+  }
+
+  const readInt64 = (p) => {
+    const lo = M.HEAPU32[p >>> 2], hi = M.HEAP32[(p >>> 2) + 1];
+    return hi * 2 ** 32 + lo;
   };
 
-  // Copies a JS array of integers into a fresh uint32 buffer on the heap.
-  function u32(values) {
-    const ptr = M._malloc(Math.max(1, values.length) * 4);
-    M.HEAPU32.set(values.map((v) => v >>> 0), ptr >>> 2);
-    return ptr;
-  }
-
-  // Calls fn(lenPtr) -> dataPtr, copies the bytes out and frees them.
-  function takeBytes(fn, what) {
-    const lenPtr = M._malloc(4);
-    try {
-      const ptr = fn(lenPtr);
-      if (!ptr) throw new EvmlrError(`could not export ${what}`);
-      const len = M.HEAPU32[lenPtr >>> 2];
-      const out = M.HEAPU8.slice(ptr, ptr + len);
-      M._free(ptr);
-      return out;
-    } finally {
-      M._free(lenPtr);
-    }
-  }
-
-  // Copies bytes into the heap and calls fn(ptr, len, statusPtr).
-  function giveBytes(bytes, fn) {
-    if (!(bytes instanceof Uint8Array)) throw new TypeError('expected a Uint8Array');
-    const ptr = M._malloc(Math.max(1, bytes.length));
-    const statusPtr = M._malloc(4);
-    try {
-      M.HEAPU8.set(bytes, ptr);
-      M.HEAP32[statusPtr >>> 2] = 0;
-      const result = fn(ptr, bytes.length, statusPtr);
-      return { result, status: M.HEAP32[statusPtr >>> 2] };
-    } finally {
-      M._free(statusPtr);
-      M._free(ptr);
-    }
-  }
-
-  function fail(what, status) {
-    throw new EvmlrError(`${what}: ${M.UTF8ToString(M._evmlr_wasm_strerror(status))}`, status);
-  }
-
-  class Ballot {
-    constructor(election, ptr) {
-      this.election = election;
-      this.ptr = ptr;
-    }
-    get voterId() {
-      return M._evmlr_wasm_ballot_voter(this.ptr);
-    }
-    toBytes() {
-      if (!this.ptr) throw new Error('ballot freed');
-      return takeBytes((lenPtr) => M._evmlr_wasm_export_ballot(this.election.ptr, this.ptr, lenPtr), 'ballot');
-    }
-    free() {
-      if (this.ptr && this.election.ptr) M._evmlr_wasm_ballot_free(this.election.ptr, this.ptr);
-      this.ptr = 0;
-    }
-  }
-
-  class Election {
-    constructor(ptr) {
-      this.ptr = ptr;
-    }
-
-    get hasKeys() {
-      return !!M._evmlr_wasm_has_sk(this.ptr);
-    }
-
-    exportParams() {
-      return takeBytes((lenPtr) => M._evmlr_wasm_export_pp(this.ptr, lenPtr), 'public parameters');
-    }
-
-    exportKeys() {
-      if (!this.hasKeys) throw new EvmlrError('this election holds no secret keys');
-      return takeBytes((lenPtr) => M._evmlr_wasm_export_sk(this.ptr, lenPtr), 'secret keys');
-    }
-
-    importKeys(bytes) {
-      const { result } = giveBytes(bytes, (ptr, len) => M._evmlr_wasm_import_sk(this.ptr, ptr, len));
-      if (result !== 0) fail('importKeys', result);
-    }
-
-    // vote: coefficients of the vote polynomial in R_q (only the constant
-    // term is reported back by count()).
-    cast(voterId, vote) {
-      if (!this.ptr) throw new Error('election freed');
-      const coeffs = Array.isArray(vote) ? vote : [vote];
-      if (coeffs.length > params.n) throw new RangeError(`vote has more than ${params.n} coefficients`);
-      const buf = u32(coeffs);
-      try {
-        const ptr = M._evmlr_wasm_cast(this.ptr, voterId, buf, coeffs.length);
-        if (!ptr) throw new EvmlrError('cast failed');
-        return new Ballot(this, ptr);
-      } finally {
-        M._free(buf);
-      }
-    }
-
-    importBallot(bytes) {
-      const { result, status } = giveBytes(bytes, (ptr, len, st) => M._evmlr_wasm_import_ballot(this.ptr, ptr, len, st));
-      if (!result) fail('importBallot', status);
-      return new Ballot(this, result);
-    }
-
-    ballotList(ballots) {
-      return u32(ballots.map((b) => {
-        if (b.election !== this || !b.ptr) throw new Error('ballot from another election, or freed');
-        return b.ptr;
-      }));
-    }
-
-    // Mixes and decrypts; the last ballot of each voter counts. Needs the
-    // secret keys. Returns the constant term of each vote, in shuffled order.
-    count(ballots) {
-      return this.countWithTranscript(ballots, false).tally;
-    }
-
-    // count(), also returning the counting transcript (Uint8Array): every
-    // server's shuffle statement and proof, which anyone holding the public
-    // parameters and the ballots can check with verifyCounting().
-    countWithTranscript(ballots, withTranscript = true) {
-      if (!this.ptr) throw new Error('election freed');
-      if (!this.hasKeys) throw new EvmlrError('count needs the secret keys (importKeys)');
-      if (ballots.length === 0) return { tally: [], transcript: null };
-      const list = this.ballotList(ballots);
-      const out = M._malloc(ballots.length * 4);
-      const trPtr = withTranscript ? M._malloc(8) : 0; // [data pointer, length]
-      try {
-        const counted = M._evmlr_wasm_count(this.ptr, list, ballots.length, out,
-                                            trPtr, trPtr ? trPtr + 4 : 0);
-        if (counted < 0) throw new EvmlrError('count failed');
-        const tally = Array.from(M.HEAPU32.subarray(out >>> 2, (out >>> 2) + counted));
-        let transcript = null;
-        if (trPtr) {
-          const data = M.HEAPU32[trPtr >>> 2], len = M.HEAPU32[(trPtr >>> 2) + 1];
-          if (!data) throw new EvmlrError('could not export the counting transcript');
-          transcript = M.HEAPU8.slice(data, data + len);
-          M._free(data);
-        }
-        return { tally, transcript };
-      } finally {
-        if (trPtr) M._free(trPtr);
-        M._free(out);
-        M._free(list);
-      }
-    }
-
-    // Checks a counting transcript against the ballots that were counted,
-    // with the public parameters only. Returns the tally it proves, or
-    // throws EvmlrError if it does not verify.
-    verifyCounting(ballots, transcript) {
-      if (!this.ptr) throw new Error('election freed');
-      const list = this.ballotList(ballots);
-      const out = M._malloc(Math.max(1, ballots.length) * 4);
-      try {
-        const { result, status } = giveBytes(transcript, (ptr, len, st) =>
-          M._evmlr_wasm_verify_counting(this.ptr, list, ballots.length, ptr, len, out, st));
-        if (status !== 0) fail('verifyCounting', status);
-        if (result < 0) throw new EvmlrError('verifyCounting: the counting transcript does not verify', 0);
-        return Array.from(M.HEAPU32.subarray(out >>> 2, (out >>> 2) + result));
-      } finally {
-        M._free(out);
-        M._free(list);
-      }
-    }
-
-    free() {
-      if (this.ptr) M._evmlr_wasm_election_free(this.ptr);
-      this.ptr = 0;
-    }
-  }
-
   return {
-    params,
-    setup(servers) {
-      const ptr = M._evmlr_wasm_setup(servers);
-      if (!ptr) throw new EvmlrError('setup failed');
-      return new Election(ptr);
-    },
-    importParams(bytes) {
-      const { result, status } = giveBytes(bytes, (ptr, len, st) => M._evmlr_wasm_import_pp(ptr, len, st));
-      if (!result) fail('importParams', status);
-      return new Election(result);
-    },
+    modulus,
+    voteLen,
     module: M,
+
+    /** A 32-byte election id: SHA-256 of a description (string or bytes). */
+    async electionId(description) {
+      const data = typeof description === 'string' ? new TextEncoder().encode(description) : description;
+      return new Uint8Array(await globalThis.crypto.subtle.digest('SHA-256', data));
+    },
+
+    /** A server's key pair: { publicKey (to publish), keyPair (to keep secret) }. */
+    keygen() {
+      return scoped((alloc) => {
+        const pk = bytesOut(alloc), kp = bytesOut(alloc);
+        check('keygen', M._evmlr_keygen(pk, kp));
+        return { publicKey: takeBytes(pk), keyPair: takeBytes(kp) };
+      });
+    },
+
+    /** Public parameters from the election id and the servers' public keys, in mixing order. */
+    params(electionId, publicKeys) {
+      if (!(electionId instanceof Uint8Array) || electionId.length !== 32) {
+        throw new TypeError('the election id is 32 bytes (see electionId())');
+      }
+      return scoped((alloc) => {
+        const out = bytesOut(alloc);
+        const [ptrs, lens] = listIn(alloc, publicKeys);
+        check('params', M._evmlr_params(out, bytesIn(alloc, electionId), publicKeys.length, ptrs, lens));
+        return takeBytes(out);
+      });
+    },
+
+    /** { servers, electionId } of public parameters. */
+    paramsInfo(pp) {
+      return scoped((alloc) => {
+        const k = alloc(4), id = alloc(32);
+        check('paramsInfo', M._evmlr_params_info(bytesIn(alloc, pp), pp.length, k, id));
+        return { servers: M.HEAPU32[k >>> 2], electionId: M.HEAPU8.slice(id, id + 32) };
+      });
+    },
+
+    /** Encrypts and proves a vote for voterId (an integer). Returns the ballot. */
+    cast(pp, voterId, vote) {
+      return scoped((alloc) => {
+        const out = bytesOut(alloc);
+        const [v, n] = voteIn(alloc, vote);
+        check('cast', M._evmlr_cast(out, bytesIn(alloc, pp), pp.length, BigInt(voterId), v, n));
+        return takeBytes(out);
+      });
+    },
+
+    /** The bulletin board's check. Returns the ballot's voter id; throws EvmlrError if invalid. */
+    checkBallot(pp, ballot) {
+      return scoped((alloc) => {
+        const id = alloc(8);
+        check('checkBallot', M._evmlr_check_ballot(bytesIn(alloc, pp), pp.length, bytesIn(alloc, ballot), ballot.length, id));
+        return readInt64(id);
+      });
+    },
+
+    /** checkBallot as a boolean, for filtering. */
+    isValidBallot(pp, ballot) {
+      try {
+        this.checkBallot(pp, ballot);
+        return true;
+      } catch (e) {
+        if (e instanceof EvmlrError && e.status === ERR_INVALID) return false;
+        throw e;
+      }
+    },
+
+    /** Server 0's input batch, from the ballots on the board (in board order). */
+    firstBatch(pp, ballots) {
+      return scoped((alloc) => {
+        const out = bytesOut(alloc);
+        const [ptrs, lens] = listIn(alloc, ballots);
+        check('firstBatch', M._evmlr_first_batch(out, bytesIn(alloc, pp), pp.length, ptrs, lens, ballots.length));
+        return takeBytes(out);
+      });
+    },
+
+    /**
+     * One server's step, with its own key pair. prevMix is the previous
+     * server's mix record (null for server 0). Returns { batch, mix }: the
+     * batch for the next server, and the record to publish.
+     */
+    mix(pp, keyPair, batch, prevMix = null) {
+      return scoped((alloc) => {
+        const outBatch = bytesOut(alloc), outMix = bytesOut(alloc);
+        const prev = prevMix ? bytesIn(alloc, prevMix) : 0;
+        check('mix', M._evmlr_mix(outBatch, outMix, bytesIn(alloc, pp), pp.length, bytesIn(alloc, keyPair), keyPair.length,
+                                  bytesIn(alloc, batch), batch.length, prev, prevMix ? prevMix.length : 0));
+        return { batch: takeBytes(outBatch), mix: takeBytes(outMix) };
+      });
+    },
+
+    /** What a mix record says: { server, received, passedOn, rejected: [{ index, reason }] }. */
+    mixInfo(pp, mix) {
+      return scoped((alloc) => {
+        const ppPtr = bytesIn(alloc, pp), mixPtr = bytesIn(alloc, mix);
+        const f = alloc(16); // server, n_in, n_out, n_rejected
+        const call = (cap, idx, why) =>
+          M._evmlr_mix_info(ppPtr, pp.length, mixPtr, mix.length, f, f + 4, f + 8, f + 12, idx, why, cap);
+        let st = call(0, 0, 0);
+        const nRej = M.HEAPU32[(f >>> 2) + 3];
+        let idx = 0, why = 0;
+        if (st === ERR_SPACE) {
+          idx = alloc(4 * nRej);
+          why = alloc(nRej);
+          st = call(nRej, idx, why);
+        }
+        check('mixInfo', st);
+        const rejected = [];
+        for (let r = 0; r < nRej; r++) {
+          const code = M.HEAPU8[why + r];
+          rejected.push({ index: M.HEAPU32[(idx >>> 2) + r], reason: REJECT_REASONS[code] ?? code });
+        }
+        return { server: M.HEAPU32[f >>> 2], received: M.HEAPU32[(f >>> 2) + 1], passedOn: M.HEAPU32[(f >>> 2) + 2], rejected };
+      });
+    },
+
+    /** The k mix records, in server order, as one transcript. */
+    transcript(pp, mixes) {
+      return scoped((alloc) => {
+        const out = bytesOut(alloc);
+        const [ptrs, lens] = listIn(alloc, mixes);
+        check('transcript', M._evmlr_transcript(out, bytesIn(alloc, pp), pp.length, ptrs, lens, mixes.length));
+        return takeBytes(out);
+      });
+    },
+
+    /**
+     * Checks a count from public data: every ballot on the board, in board
+     * order, and the transcript. Returns the votes; throws EvmlrError (status
+     * 12) if the count does not verify.
+     */
+    verify(pp, ballots, transcript) {
+      return scoped((alloc) => {
+        const cap = Math.max(1, ballots.length);
+        const votes = alloc(2 * voteLen * cap), n = alloc(4);
+        const [ptrs, lens] = listIn(alloc, ballots);
+        check('verify', M._evmlr_verify(votes, cap, n, bytesIn(alloc, pp), pp.length, ptrs, lens, ballots.length,
+                                        bytesIn(alloc, transcript), transcript.length));
+        return votesOut(votes, M.HEAPU32[n >>> 2]);
+      });
+    },
+
+    /** The votes in the last server's output batch. */
+    results(pp, finalBatch) {
+      return scoped((alloc) => {
+        const ppPtr = bytesIn(alloc, pp), b = bytesIn(alloc, finalBatch), n = alloc(4);
+        let st = M._evmlr_results(0, 0, n, ppPtr, pp.length, b, finalBatch.length);
+        const count = M.HEAPU32[n >>> 2];
+        if (st === ERR_SPACE) {
+          const votes = alloc(2 * voteLen * count);
+          check('results', M._evmlr_results(votes, count, n, ppPtr, pp.length, b, finalBatch.length));
+          return votesOut(votes, count);
+        }
+        check('results', st);
+        return [];
+      });
+    },
   };
 }

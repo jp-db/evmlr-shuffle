@@ -1,6 +1,7 @@
 #include "evmlr_enc_proof.h"
 #include "evmlr_utils.h"
 #include <stdlib.h>
+#include <string.h>
 
 static void build_A_hpke(nmod_poly_mat_t A_hpke, const evmlr_mlpke_pk_t pk) {
     nmod_poly_mat_zero(A_hpke);
@@ -72,6 +73,22 @@ static void ctx_otse_init(evmlr_lin_proof_ctx_t ctx, slong L) {
     evmlr_lin_proof_ctx_set_gaussian(ctx, 1); // d_dagger is binary
 }
 
+/* The two proofs hash the label behind a tag of their own, so neither can be
+ * passed off as the other. */
+#define LABEL_MAX 256
+
+static size_t tagged_label(uint8_t out[LABEL_MAX + 1], uint8_t tag, const uint8_t* label, size_t len) {
+    if (len == 0) {
+        return 0; // unlabelled, as before labels existed
+    }
+    if (len > LABEL_MAX) {
+        len = LABEL_MAX; // callers pass hashes; longer labels are cut, not overrun
+    }
+    out[0] = tag;
+    memcpy(out + 1, label, len);
+    return len + 1;
+}
+
 void evmlr_enc_proof_init(evmlr_enc_proof_t proof, slong L_curr) {
     evmlr_lin_proof_ctx_t ctx_hpke;
     ctx_hpke_init(ctx_hpke);
@@ -110,7 +127,13 @@ void evmlr_enc_proof_prove(evmlr_enc_proof_t proof,
                            const nmod_poly_mat_t d_dagger,
                            const nmod_poly_mat_t plaintext,
                            slong L_in,
-                           slong L_max) {
+                           slong L_max,
+                           const uint8_t* label,
+                           size_t label_len) {
+    uint8_t lab_hpke[LABEL_MAX + 1], lab_otse[LABEL_MAX + 1];
+    size_t len_hpke = tagged_label(lab_hpke, 'H', label, label_len);
+    size_t len_otse = tagged_label(lab_otse, 'O', label, label_len);
+
     // 1. HPKE proof of correct encryption
     slong hpke_dim = K_LWR * (K_LWE + 1);
     nmod_poly_mat_t A_hpke, s1_hpke, s2_hpke, t_hpke;
@@ -141,6 +164,8 @@ void evmlr_enc_proof_prove(evmlr_enc_proof_t proof,
 
     evmlr_lin_proof_ctx_t ctx_hpke;
     ctx_hpke_init(ctx_hpke);
+    ctx_hpke->label = lab_hpke;
+    ctx_hpke->label_len = len_hpke;
     evmlr_lin_prove(&proof->proof_hpke, A_hpke, s1_hpke, s2_hpke, t_hpke, ctx_hpke);
     evmlr_lin_proof_ctx_clear(ctx_hpke);
 
@@ -169,6 +194,8 @@ void evmlr_enc_proof_prove(evmlr_enc_proof_t proof,
 
     evmlr_lin_proof_ctx_t ctx_otse;
     ctx_otse_init(ctx_otse, L_in);
+    ctx_otse->label = lab_otse;
+    ctx_otse->label_len = len_otse;
     evmlr_lin_prove(&proof->proof_otse, A_otse, s1_otse, s2_otse, t_otse, ctx_otse);
     evmlr_lin_proof_ctx_clear(ctx_otse);
 
@@ -178,15 +205,13 @@ void evmlr_enc_proof_prove(evmlr_enc_proof_t proof,
     nmod_poly_mat_clear(t_otse);
 }
 
-int evmlr_enc_proof_verify(const evmlr_enc_proof_t proof,
-                           const evmlr_mlpke_pk_t pk,
-                           const evmlr_otse_ctx_t otse_ctx,
-                           const evmlr_hpke_cipher_t cipher,
-                           const nmod_poly_mat_t decrypted_plaintext,
-                           slong L_max) {
-    slong L_in = decrypted_plaintext->r;
-
-    // 1. Verify HPKE proof
+int evmlr_enc_proof_verify_hpke(const evmlr_enc_proof_t proof,
+                                const evmlr_mlpke_pk_t pk,
+                                const evmlr_hpke_cipher_t cipher,
+                                const uint8_t* label,
+                                size_t label_len) {
+    uint8_t lab[LABEL_MAX + 1];
+    size_t lab_len = tagged_label(lab, 'H', label, label_len);
     slong hpke_dim = K_LWR * (K_LWE + 1);
     nmod_poly_mat_t A_hpke, t_hpke;
     nmod_poly_mat_init(A_hpke, hpke_dim, hpke_dim, MOD_Q);
@@ -206,15 +231,28 @@ int evmlr_enc_proof_verify(const evmlr_enc_proof_t proof,
 
     evmlr_lin_proof_ctx_t ctx_hpke;
     ctx_hpke_init(ctx_hpke);
+    ctx_hpke->label = lab;
+    ctx_hpke->label_len = lab_len;
     int hpke_ok = evmlr_lin_verify(&proof->proof_hpke, A_hpke, t_hpke, ctx_hpke);
     evmlr_lin_proof_ctx_clear(ctx_hpke);
 
     nmod_poly_mat_clear(A_hpke);
     nmod_poly_mat_clear(t_hpke);
+    return hpke_ok;
+}
 
-    if (!hpke_ok) return 0;
+int evmlr_enc_proof_verify_otse(const evmlr_enc_proof_t proof,
+                                const evmlr_otse_ctx_t otse_ctx,
+                                const evmlr_hpke_cipher_t cipher,
+                                const nmod_poly_mat_t decrypted_plaintext,
+                                const uint8_t* label,
+                                size_t label_len) {
+    slong L_in = decrypted_plaintext->r;
+    uint8_t lab[LABEL_MAX + 1];
+    size_t lab_len = tagged_label(lab, 'O', label, label_len);
 
-    // 2. Verify OTSE proof
+    if (cipher->otse_cipher->c->r < L_in) return 0;
+
     slong otse_m = 2 * ETA * (K_LWE + L_in);
     nmod_poly_mat_t A_otse, t_otse;
     nmod_poly_mat_init(A_otse, L_in, otse_m, MOD_Q);
@@ -230,13 +268,27 @@ int evmlr_enc_proof_verify(const evmlr_enc_proof_t proof,
 
     evmlr_lin_proof_ctx_t ctx_otse;
     ctx_otse_init(ctx_otse, L_in);
+    ctx_otse->label = lab;
+    ctx_otse->label_len = lab_len;
     int otse_ok = evmlr_lin_verify(&proof->proof_otse, A_otse, t_otse, ctx_otse);
     evmlr_lin_proof_ctx_clear(ctx_otse);
 
     nmod_poly_mat_clear(A_otse);
     nmod_poly_mat_clear(t_otse);
-
     return otse_ok;
+}
+
+int evmlr_enc_proof_verify(const evmlr_enc_proof_t proof,
+                           const evmlr_mlpke_pk_t pk,
+                           const evmlr_otse_ctx_t otse_ctx,
+                           const evmlr_hpke_cipher_t cipher,
+                           const nmod_poly_mat_t decrypted_plaintext,
+                           slong L_max,
+                           const uint8_t* label,
+                           size_t label_len) {
+    (void) L_max;
+    return evmlr_enc_proof_verify_hpke(proof, pk, cipher, label, label_len)
+        && evmlr_enc_proof_verify_otse(proof, otse_ctx, cipher, decrypted_plaintext, label, label_len);
 }
 
 #ifdef MAIN
@@ -297,10 +349,24 @@ void test_enc_proof(flint_rand_t state) {
     TEST_BEGIN("encryption proof can be created and verified") {
         evmlr_enc_proof_prove(proof, keypair->enc_keypair->pk, hpke_ctx->otse_ctx,
                               r_mats, e2_mats, e3_polys, key, cipher, d_dagger,
-                              msg, L_in, L_max);
+                              msg, L_in, L_max, NULL, 0);
         int valid = evmlr_enc_proof_verify(proof, keypair->enc_keypair->pk, hpke_ctx->otse_ctx,
-                                           cipher, msg, L_max);
+                                           cipher, msg, L_max, NULL, 0);
         TEST_ASSERT(valid == 1, end);
+    } TEST_END;
+
+    TEST_BEGIN("a labelled proof verifies only under its label") {
+        static const uint8_t lab_a[] = "election A, voter 1", lab_b[] = "election A, voter 2";
+        evmlr_enc_proof_prove(proof, keypair->enc_keypair->pk, hpke_ctx->otse_ctx,
+                              r_mats, e2_mats, e3_polys, key, cipher, d_dagger,
+                              msg, L_in, L_max, lab_a, sizeof(lab_a));
+        TEST_ASSERT(evmlr_enc_proof_verify(proof, keypair->enc_keypair->pk, hpke_ctx->otse_ctx,
+                                           cipher, msg, L_max, lab_a, sizeof(lab_a)) == 1, end);
+        TEST_ASSERT(evmlr_enc_proof_verify_hpke(proof, keypair->enc_keypair->pk, cipher, lab_a, sizeof(lab_a)) == 1, end);
+        TEST_ASSERT(evmlr_enc_proof_verify_hpke(proof, keypair->enc_keypair->pk, cipher, lab_b, sizeof(lab_b)) == 0, end);
+        TEST_ASSERT(evmlr_enc_proof_verify_hpke(proof, keypair->enc_keypair->pk, cipher, NULL, 0) == 0, end);
+        TEST_ASSERT(evmlr_enc_proof_verify(proof, keypair->enc_keypair->pk, hpke_ctx->otse_ctx,
+                                           cipher, msg, L_max, lab_b, sizeof(lab_b)) == 0, end);
     } TEST_END;
 
 end:
@@ -370,12 +436,12 @@ void bench_enc_proof(flint_rand_t state) {
     BENCH_BEGIN("Encryption ZK proof generation") {
         BENCH_ADD(evmlr_enc_proof_prove(proof, keypair->enc_keypair->pk, hpke_ctx->otse_ctx,
                                         r_mats, e2_mats, e3_polys, key, cipher, d_dagger,
-                                        msg, L_in, L_max));
+                                        msg, L_in, L_max, NULL, 0));
     } BENCH_END;
 
     BENCH_BEGIN("Encryption ZK proof verification") {
         BENCH_ADD(evmlr_enc_proof_verify(proof, keypair->enc_keypair->pk, hpke_ctx->otse_ctx,
-                                         cipher, msg, L_max));
+                                         cipher, msg, L_max, NULL, 0));
     } BENCH_END;
 
     evmlr_enc_proof_clear(proof);
@@ -458,13 +524,13 @@ void bench_layered_enc_proof(flint_rand_t state) {
         uint64_t start_prove = cpucycles();
         evmlr_enc_proof_prove(proof, keypairs[j]->enc_keypair->pk, hpke_ctx->otse_ctx,
                               r_mats, e2_mats, e3_polys, key, cipher, d_dagger,
-                              current_msg, L_in, L_max);
+                              current_msg, L_in, L_max, NULL, 0);
         uint64_t end_prove = cpucycles();
 
         // Benchmark verify
         uint64_t start_verify = cpucycles();
         int valid = evmlr_enc_proof_verify(proof, keypairs[j]->enc_keypair->pk, hpke_ctx->otse_ctx,
-                                           cipher, current_msg, L_max);
+                                           cipher, current_msg, L_max, NULL, 0);
         uint64_t end_verify = cpucycles();
 
         printf("Layer %ld (L_in = %ld): prove = %llu cycles, verify = %llu cycles, status = %s\n",

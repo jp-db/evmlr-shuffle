@@ -31,10 +31,12 @@ void evmlr_commit_ctx_init(evmlr_commit_ctx_t ctx, slong N, flint_rand_t state) 
     nmod_poly_set_coeff_ui(ctx->cyclo_poly, 0, 1);
 }
 
-/* Uniform coefficients mod q from the stream, by rejection on 64-bit little-
- * endian words (as evmlr_utils_uniform_poly does with system randomness). */
-static void expand_uniform_mat(nmod_poly_mat_t mat, prg_t *prg) {
-    const uint64_t limit = UINT64_MAX - (UINT64_MAX % MOD_Q + 1) % MOD_Q;
+/* Uniform coefficients mod the matrix's modulus from the stream, by
+ * rejection on 64-bit little-endian words (as evmlr_utils_uniform_poly does
+ * with system randomness). For a power-of-two modulus nothing is rejected. */
+void evmlr_expand_uniform_mat(nmod_poly_mat_t mat, prg_t *prg) {
+    const uint64_t mod = (uint64_t) nmod_poly_mat_modulus(mat);
+    const uint64_t limit = UINT64_MAX - (UINT64_MAX % mod + 1) % mod;
     uint8_t buf[8 * DEGREE_N];
 
     for (slong i = 0; i < nmod_poly_mat_nrows(mat); i++) {
@@ -51,7 +53,7 @@ static void expand_uniform_mat(nmod_poly_mat_t mat, prg_t *prg) {
                         u |= (uint64_t) buf[8 * b + t] << (8 * t);
                     }
                     if (u <= limit) {
-                        nmod_poly_set_coeff_ui(poly, c++, (ulong) (u % MOD_Q));
+                        nmod_poly_set_coeff_ui(poly, c++, (ulong) (u % mod));
                     }
                 }
             }
@@ -66,9 +68,9 @@ void evmlr_commit_ctx_init_seeded(evmlr_commit_ctx_t ctx, slong N, const uint8_t
     ctx->N = N;
     prg_setseed(&prg, seed);
     nmod_poly_mat_init(ctx->A_1, K_SIS, N, MOD_Q);
-    expand_uniform_mat(ctx->A_1, &prg);
+    evmlr_expand_uniform_mat(ctx->A_1, &prg);
     nmod_poly_mat_init(ctx->A_2, K_SIS, 2 * K_SIS, MOD_Q);
-    expand_uniform_mat(ctx->A_2, &prg);
+    evmlr_expand_uniform_mat(ctx->A_2, &prg);
     memset(&prg, 0, sizeof(prg));
 
     nmod_poly_init(ctx->cyclo_poly, MOD_Q);
