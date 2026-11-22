@@ -217,6 +217,16 @@ so editing it rebuilds everything that depends on it.
       them). A proof of well-formedness, for n-out-of-m first and later for
       the polynomials ranked and transferable votes need, would let the
       board refuse such ballots instead.
+- [ ] Make voter ids the same size in every build. They are FLINT `slong`,
+      which is 64 bits natively but 32 bits on wasm32, so `evmlr_cast` in the
+      browser refuses any id of 2^31 or more (`EVMLR_ERR_ARG`) while the
+      native build accepts it. An application that hands out 64-bit ids gets
+      voters who cannot cast. Also, `wasm/evmlr.mjs` reads ids back
+      (`checkBallot`) as a JavaScript number, which loses precision above
+      2^53; returning a BigInt (or a decimal string) would be exact. Until
+      this changes, applications should keep ids in 1 .. 2^31 − 1 (the
+      mixnet-voting ballot box does). A fixed-width `int64_t` id in the
+      ballot and in `evmlr_voting_submission_t` would fix both.
 - [ ] Optimize the implementation for performance. Multiplication in R_q now
       uses the CRT decomposition (`evmlr_crt.c`); the remaining headroom is in
       keeping operands in the split representation between operations instead
