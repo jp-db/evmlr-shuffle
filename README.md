@@ -186,6 +186,37 @@ so editing it rebuilds everything that depends on it.
 - [ ] Mix a single remaining ciphertext. The proof of shuffle needs N >= 2,
       so `evmlr_voting_mix_step` returns `EVMLR_VOTING_ERR_TOO_FEW` when one
       is left (which a shuffle could not hide anyway).
+- [ ] Check all of a ballot before it goes on the board.
+      `evmlr_voting_check_ballot` checks only the ML-PKE half of the
+      outermost proof, which sits in the first ~2.3 KB of a ~100 KB ballot
+      (k = 3). Flipping one bit almost anywhere else still passes it: about
+      90% of single-bit changes in a sampled scan. The mix server whose
+      layer was changed rejects the ciphertext later (HPKE or OTSE reason)
+      and the vote is not counted, so integrity holds, but:
+      - the board accepts ballots that will never count, and the voter is
+        not told when casting;
+      - since the last ballot of each voter counts, a corrupted revote
+        replaces an earlier valid ballot, and the voter is left with no
+        vote.
+
+      The single proof of the first item, checked in full at casting time,
+      would close this too.
+- [ ] Verify a partial chain of mix records. `evmlr_verify` needs all k
+      records and the board, so neither server j nor the ballot box can
+      check servers 0..j − 1's proofs of shuffle before server j mixes.
+      `evmlr_mix` only checks that its input batch is what the previous
+      record says was output. A bad proof therefore shows up only in the
+      final verification, after every server has mixed. A call that checks
+      records 0..j − 1 against the board, without needing the rest, would
+      let each server refuse a bad chain before it starts.
+- [ ] Prove that a vote is well formed. A vote is any EVMLR_VOTE_LEN
+      coefficients mod q, and nothing proves it encodes a valid answer (for
+      an n-out-of-m question: coefficients in {0, 1} and at most n set).
+      Applications must decode the votes after the count and leave out the
+      malformed ones (the mixnet-voting ballot box does this and reports
+      them). A proof of well-formedness, for n-out-of-m first and later for
+      the polynomials ranked and transferable votes need, would let the
+      board refuse such ballots instead.
 - [ ] Optimize the implementation for performance. Multiplication in R_q now
       uses the CRT decomposition (`evmlr_crt.c`); the remaining headroom is in
       keeping operands in the split representation between operations instead
