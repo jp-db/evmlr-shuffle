@@ -17,7 +17,12 @@ void evmlr_enc_proof_clear(evmlr_enc_proof_t proof);
 
 /* label (label_len bytes, may be empty) is hashed into both Fiat-Shamir
  * challenges, binding the proof to a context such as an election and a
- * voter: a proof made under one label does not verify under another. */
+ * voter: a proof made under one label does not verify under another.
+ *
+ * The ML-PKE half is also bound to the OTSE half and to the OTSE ciphertext:
+ * evmlr_enc_proof_verify_hpke, which needs no secret, fails if either was
+ * changed, so the whole of a proof and its ciphertext can be checked for
+ * tampering by anyone. */
 void evmlr_enc_proof_prove(evmlr_enc_proof_t proof,
                            const evmlr_mlpke_pk_t pk,
                            const evmlr_otse_ctx_t otse_ctx,
@@ -43,7 +48,8 @@ int evmlr_enc_proof_verify(const evmlr_enc_proof_t proof,
                            size_t label_len);
 
 /* Only the first half of evmlr_enc_proof_verify: that the ML-PKE ciphertexts
- * encrypt a binary OTSE key under pk. It needs neither the plaintext nor a
+ * encrypt a binary OTSE key under pk, and that neither the OTSE half nor the
+ * OTSE ciphertext was changed since. It needs neither the plaintext nor a
  * secret key, so anyone can run it on a ballot as soon as it is cast. */
 int evmlr_enc_proof_verify_hpke(const evmlr_enc_proof_t proof,
                                 const evmlr_mlpke_pk_t pk,
@@ -59,6 +65,10 @@ int evmlr_enc_proof_verify_otse(const evmlr_enc_proof_t proof,
                                 const nmod_poly_mat_t decrypted_plaintext,
                                 const uint8_t* label,
                                 size_t label_len);
+
+/* A hash of the whole proof (both halves), for binding it into another
+ * proof's label. */
+void evmlr_enc_proof_digest(uint8_t out[32], const evmlr_enc_proof_t proof);
 
 void evmlr_enc_proof_copy(evmlr_enc_proof_t dest, const evmlr_enc_proof_t src);
 

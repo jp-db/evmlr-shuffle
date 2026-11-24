@@ -16,7 +16,8 @@
  *     voter                  evmlr_cast              -> ballot
  *     bulletin board         evmlr_check_ballot      -> accept or refuse a ballot
  *     server 0               evmlr_first_batch       -> its input, from the ballots on the board
- *     server j, in turn      evmlr_mix               -> batch for server j + 1, mix record (publish)
+ *     server j, in turn      evmlr_verify_mixes      -> whether records 0..j-1 hold, before mixing
+ *                            evmlr_mix               -> batch for server j + 1, mix record (publish)
  *     anyone                 evmlr_mix_info          -> what a server rejected, and why
  *     anyone                 evmlr_transcript        -> the k mix records as one transcript
  *     anyone                 evmlr_verify            -> the votes, if the whole count verifies
@@ -69,7 +70,7 @@ typedef enum {
     EVMLR_ERR_ARG = 10,       /**< invalid argument, or an object for another election or step */
     EVMLR_ERR_KEY = 11,       /**< a key pair that is not server j's, or whose halves differ */
     EVMLR_ERR_INVALID = 12,   /**< decodes, but a proof or a count does not verify */
-    EVMLR_ERR_TOO_FEW = 13,   /**< one ciphertext left to mix: a shuffle needs two */
+    /* 13 is no longer returned (it was "one ciphertext left to mix") */
     EVMLR_ERR_SPACE = 14      /**< an output array is too small; the count needed is returned */
 } evmlr_status;
 
@@ -104,8 +105,11 @@ int evmlr_params_info(const uint8_t *pp, size_t pp_len, uint32_t *k, uint8_t ele
 
 /**
  * Encrypts @p vote (vote_len <= EVMLR_VOTE_LEN coefficients, each < q) for
- * every server and proves every layer, bound to the election and to
- * @p voter_id. Slow (seconds); in a browser, call it from a Web Worker.
+ * every server and proves every layer, bound to the election, to
+ * @p voter_id (any int64_t, in every build) and, through the outermost
+ * proof, to the whole ballot. Checks every layer before returning
+ * (EVMLR_ERR_INVALID if one fails, which means a bug or a fault: do not
+ * cast). Slow (seconds); in a browser, call it from a Web Worker.
  */
 int evmlr_cast(evmlr_bytes *ballot, const uint8_t *pp, size_t pp_len, int64_t voter_id,
                const uint16_t *vote, size_t vote_len);
@@ -113,8 +117,12 @@ int evmlr_cast(evmlr_bytes *ballot, const uint8_t *pp, size_t pp_len, int64_t vo
 /**
  * What a bulletin board checks before accepting a ballot: that it decodes
  * for this election and that its public proof holds for its voter id
- * (EVMLR_ERR_INVALID otherwise; a ballot copied under another id fails).
- * Writes the voter id to @p voter_id if non-NULL.
+ * (EVMLR_ERR_INVALID otherwise). The proof is bound to every byte of the
+ * ballot, so a ballot copied under another id, or changed anywhere, fails.
+ * It cannot show that the inner layers were made correctly (only the
+ * servers can, as they decrypt): a voter whose client makes them wrong
+ * loses their own vote, and nobody else's. Writes the voter id to
+ * @p voter_id if non-NULL.
  */
 int evmlr_check_ballot(const uint8_t *pp, size_t pp_len, const uint8_t *ballot, size_t ballot_len,
                        int64_t *voter_id);
@@ -132,7 +140,10 @@ int evmlr_first_batch(evmlr_bytes *batch, const uint8_t *pp, size_t pp_len,
  * One server's step. The batch says which server it is for; @p keypair must
  * be that server's. For server j > 0, @p prev_mix is server j - 1's mix
  * record, and the batch must be what it says was output (EVMLR_ERR_INVALID
- * otherwise); for server 0 it must be NULL. Writes the batch for the next
+ * otherwise); for server 0 it must be NULL. That checks the hand-over only:
+ * call evmlr_verify_mixes first to check the proofs of servers 0..j-1. A
+ * single ciphertext left is mixed too (shuffled with a copy of itself),
+ * though nothing can hide whose it is. Writes the batch for the next
  * server (for the last server: the votes, see evmlr_results) and the mix
  * record to publish.
  */
@@ -151,6 +162,20 @@ int evmlr_mix(evmlr_bytes *out_batch, evmlr_bytes *mix, const uint8_t *pp, size_
 int evmlr_mix_info(const uint8_t *pp, size_t pp_len, const uint8_t *mix, size_t mix_len,
                    uint32_t *server, uint32_t *n_in, uint32_t *n_out, uint32_t *n_rejected,
                    uint32_t *rejected, uint8_t *reasons, size_t cap);
+
+/**
+ * Checks the first @p m (0..k) mix records, mixes[j] being server j's,
+ * against the ballots on the board (in the board's order): everything
+ * evmlr_verify checks of those servers. Server m calls it before mixing,
+ * so a bad record is refused instead of extended, and the board can call
+ * it after every step. Writes the number of ciphertexts record m - 1 says
+ * were output (for m = 0: the ballots that count) to @p n_out if non-NULL.
+ * EVMLR_ERR_INVALID if anything fails; EVMLR_ERR_ARG if the records are
+ * out of order or more than k.
+ */
+int evmlr_verify_mixes(uint32_t *n_out, const uint8_t *pp, size_t pp_len,
+                       const uint8_t *const *ballots, const size_t *ballot_lens, size_t n,
+                       const uint8_t *const *mixes, const size_t *mix_lens, size_t m);
 
 /** The k mix records (in server order) as one counting transcript. */
 int evmlr_transcript(evmlr_bytes *transcript, const uint8_t *pp, size_t pp_len,

@@ -43,7 +43,10 @@
 
 #include "evmlr_voting.h"
 
-#define EVMLR_SER_VERSION 3
+/* 4: the outer proof of a ballot is bound to its whole ballot, voter ids are
+ * int64 in every build, and a mix record may hold a shuffle of one. A
+ * version-3 ballot would not verify, so it is refused as a version. */
+#define EVMLR_SER_VERSION 4
 #define EVMLR_SER_HEADER_LEN 20
 
 typedef enum {

@@ -28,7 +28,6 @@ void evmlr_bytes_free(evmlr_bytes *b) {
 
 const char *evmlr_strerror(int status) {
     switch (status) {
-        case EVMLR_ERR_TOO_FEW: return "only one ciphertext left to mix; a shuffle needs two";
         case EVMLR_ERR_SPACE:   return "output array too small";
         default:                return evmlr_ser_strerror(status);
     }
@@ -72,7 +71,6 @@ static int from_voting(int st) {
         case EVMLR_VOTING_OK:          return EVMLR_OK;
         case EVMLR_VOTING_ERR_KEY:     return EVMLR_ERR_KEY;
         case EVMLR_VOTING_ERR_NOMEM:   return EVMLR_ERR_NOMEM;
-        case EVMLR_VOTING_ERR_TOO_FEW: return EVMLR_ERR_TOO_FEW;
         default:                       return EVMLR_ERR_ARG;
     }
 }
@@ -234,8 +232,7 @@ int evmlr_cast(evmlr_bytes *ballot, const uint8_t *pp_in, size_t pp_len, int64_t
     int st;
 
     empty(ballot);
-    if (ballot == NULL || vote_len > DEGREE_N || (vote_len > 0 && vote == NULL)
-        || (int64_t) (slong) voter_id != voter_id) { /* slong is 32 bits on wasm32 */
+    if (ballot == NULL || vote_len > DEGREE_N || (vote_len > 0 && vote == NULL)) {
         return EVMLR_ERR_ARG;
     }
     for (size_t i = 0; i < vote_len; i++) {
@@ -252,9 +249,12 @@ int evmlr_cast(evmlr_bytes *ballot, const uint8_t *pp_in, size_t pp_len, int64_t
     }
     rand_init(state);
     evmlr_voting_submission_init(sub, pp);
-    evmlr_voting_casting(sub, (slong) voter_id, v, pp, state);
-    evmlr_buf_init(&b);
-    st = take(ballot, &b, evmlr_serialize_submission(&b, sub, pp));
+    if (evmlr_voting_casting(sub, voter_id, v, pp, state)) {
+        evmlr_buf_init(&b);
+        st = take(ballot, &b, evmlr_serialize_submission(&b, sub, pp));
+    } else {
+        st = EVMLR_ERR_INVALID; /* a layer's proof failed its own check: do not cast */
+    }
 
     evmlr_voting_submission_clear(sub, pp);
     nmod_poly_mat_clear(v);
@@ -275,7 +275,7 @@ int evmlr_check_ballot(const uint8_t *pp_in, size_t pp_len, const uint8_t *ballo
     st = evmlr_deserialize_submission(sub, pp, ballot, ballot_len);
     if (st == EVMLR_OK) {
         if (voter_id != NULL) {
-            *voter_id = (int64_t) sub->voter_id;
+            *voter_id = sub->voter_id;
         }
         st = evmlr_voting_check_ballot(pp, sub) ? EVMLR_OK : EVMLR_ERR_INVALID;
         evmlr_voting_submission_clear(sub, pp);
@@ -506,6 +506,56 @@ int evmlr_verify(uint16_t *votes, size_t cap, size_t *n_votes, const uint8_t *pp
     return st;
 }
 
+int evmlr_verify_mixes(uint32_t *n_out, const uint8_t *pp_in, size_t pp_len,
+                       const uint8_t *const *ballots, const size_t *ballot_lens, size_t n,
+                       const uint8_t *const *mixes, const size_t *mix_lens, size_t m) {
+    evmlr_voting_submission_struct *subs;
+    evmlr_voting_mix_struct *mx = NULL;
+    evmlr_voting_pp_t pp;
+    size_t got = 0;
+    slong out;
+    int st;
+
+    if (n_out != NULL) {
+        *n_out = 0;
+    }
+    if (m > 0 && (mixes == NULL || mix_lens == NULL)) {
+        return EVMLR_ERR_ARG;
+    }
+    if ((st = evmlr_deserialize_pp(pp, pp_in, pp_len)) != EVMLR_OK) {
+        return st;
+    }
+    if (m > (size_t) pp->k) {
+        st = EVMLR_ERR_ARG;
+    } else if ((mx = (evmlr_voting_mix_struct *) calloc(m ? m : 1, sizeof(*mx))) == NULL) {
+        st = EVMLR_ERR_NOMEM;
+    }
+    for (; st == EVMLR_OK && got < m; got++) {
+        st = evmlr_deserialize_mix(&mx[got], pp, mixes[got], mix_lens[got]);
+        if (st != EVMLR_OK) {
+            break; /* a failed decode leaves the record empty */
+        }
+        if (mx[got].j != (slong) got) {
+            st = EVMLR_ERR_ARG; /* out of order */
+        }
+    }
+    if (st == EVMLR_OK && (st = decode_ballots(&subs, pp, ballots, ballot_lens, n)) == EVMLR_OK) {
+        out = evmlr_voting_verify_mixes(mx, (slong) m, (const evmlr_voting_submission_t *) subs, (slong) n, pp);
+        if (out < 0) {
+            st = EVMLR_ERR_INVALID;
+        } else if (n_out != NULL) {
+            *n_out = (uint32_t) out;
+        }
+        free_ballots(subs, n, pp);
+    }
+    for (size_t j = 0; mx != NULL && j < m; j++) {
+        evmlr_voting_mix_clear(&mx[j]); /* calloc'd: records never read are empty */
+    }
+    free(mx);
+    evmlr_voting_pp_clear(pp);
+    return st;
+}
+
 int evmlr_results(uint16_t *votes, size_t cap, size_t *n_votes, const uint8_t *pp_in, size_t pp_len,
                   const uint8_t *batch_in, size_t batch_len) {
     evmlr_voting_batch_t batch;
@@ -541,7 +591,9 @@ static void test(void) {
     const uint8_t *pk_ptr[K], *ballot_ptr[6], *mix_ptr[K];
     size_t pk_len[K], ballot_len[6], mix_len[K], n_votes = 0;
     uint8_t id[EVMLR_ELECTION_ID_BYTES];
-    const int64_t voters[6] = { 11, 12, 13, 12, 14, 15 };
+    /* Voter 12's id needs more than 32 bits, as it may in any build. */
+    const int64_t big = INT64_C(0x123456789a);
+    const int64_t voters[6] = { 11, big, 13, big, 14, 15 };
     const uint16_t choice[6] = { 1, 2, 3, 3, 2, 1 };
     uint16_t votes[6 * DEGREE_N];
     int n_ballots = 0, n_batches = 0, n_mixes = 0;
@@ -588,6 +640,22 @@ static void test(void) {
         TEST_ASSERT(st == EVMLR_ERR_INVALID, end);
     } TEST_END;
 
+    TEST_ONCE("api: the board refuses a ballot changed anywhere") {
+        uint8_t *copy = (uint8_t *) malloc(ballots[0].len);
+        int refused = 1;
+        /* Positions across the ballot: ciphertext, outer and inner proofs. */
+        for (int t = 1; t < 16; t++) {
+            size_t at = EVMLR_SER_HEADER_LEN + 8 + (ballots[0].len - EVMLR_SER_HEADER_LEN - 8) * (size_t) t / 16;
+            int st;
+            memcpy(copy, ballots[0].data, ballots[0].len);
+            copy[at] ^= 0x01;
+            st = evmlr_check_ballot(pp.data, pp.len, copy, ballots[0].len, NULL);
+            refused = refused && st != EVMLR_OK;
+        }
+        free(copy);
+        TEST_ASSERT(refused, end);
+    } TEST_END;
+
     TEST_ONCE("api: the servers mix in turn, each with its own key") {
         TEST_ASSERT(evmlr_first_batch(&batch[0], pp.data, pp.len, ballot_ptr, ballot_len, 6) == EVMLR_OK, end);
         n_batches = 1;
@@ -597,6 +665,10 @@ static void test(void) {
         for (int j = 0; j < K; j++) {
             const uint8_t *prev = j ? mixes[j - 1].data : NULL;
             size_t prev_len = j ? mixes[j - 1].len : 0;
+            uint32_t chain_out = 0;
+            /* Server j checks servers 0..j-1 before it mixes. */
+            TEST_ASSERT(evmlr_verify_mixes(&chain_out, pp.data, pp.len, ballot_ptr, ballot_len, 6,
+                                           mix_ptr, mix_len, (size_t) j) == EVMLR_OK && chain_out == 5, end);
             TEST_ASSERT(evmlr_mix(&batch[j + 1], &mixes[j], pp.data, pp.len, kp[j].data, kp[j].len,
                                   batch[j].data, batch[j].len, prev, prev_len) == EVMLR_OK, end);
             n_batches = j + 2;
@@ -616,6 +688,28 @@ static void test(void) {
         TEST_ASSERT(server == 0 && n_in == 5 && n_out == 5 && n_rej == 0, end);
     } TEST_END;
 
+    TEST_ONCE("api: a bad record is found before the next server mixes") {
+        uint8_t *bad = (uint8_t *) malloc(mixes[0].len);
+        const uint8_t *ptrs[K];
+        size_t lens[K];
+        int st;
+        memcpy(bad, mixes[0].data, mixes[0].len);
+        bad[mixes[0].len - 100] ^= 0x01; /* inside the proof of shuffle */
+        memcpy(ptrs, mix_ptr, sizeof(ptrs));
+        ptrs[0] = bad;
+        st = evmlr_verify_mixes(NULL, pp.data, pp.len, ballot_ptr, ballot_len, 6, ptrs, mix_len, 1);
+        free(bad);
+        TEST_ASSERT(st == EVMLR_ERR_INVALID || st == EVMLR_ERR_VALUE, end);
+        TEST_ASSERT(evmlr_verify_mixes(NULL, pp.data, pp.len, ballot_ptr, ballot_len, 6, mix_ptr, mix_len, K) == EVMLR_OK, end);
+        /* Out of order, and more records than servers. */
+        ptrs[0] = mix_ptr[1];
+        ptrs[1] = mix_ptr[0];
+        lens[0] = mix_len[1];
+        lens[1] = mix_len[0];
+        TEST_ASSERT(evmlr_verify_mixes(NULL, pp.data, pp.len, ballot_ptr, ballot_len, 6, ptrs, lens, 2) == EVMLR_ERR_ARG, end);
+        TEST_ASSERT(evmlr_verify_mixes(NULL, pp.data, pp.len, ballot_ptr, ballot_len, 6, mix_ptr, mix_len, K + 1) == EVMLR_ERR_ARG, end);
+    } TEST_END;
+
     TEST_ONCE("api: the last batch holds the votes, and the auditor gets the same") {
         uint16_t check[6 * DEGREE_N];
         size_t n_check = 0;
@@ -633,6 +727,35 @@ static void test(void) {
                     && n_check == 5, end);
         /* Not the ballots that were counted. */
         TEST_ASSERT(evmlr_verify(check, 6, &n_check, pp.data, pp.len, ballot_ptr, ballot_len, 5, tr.data, tr.len) == EVMLR_ERR_INVALID, end);
+    } TEST_END;
+
+    TEST_ONCE("api: an election with a single ballot is counted and verified") {
+        evmlr_bytes b[K + 1], m[K], t = { 0 };
+        const uint8_t *mp[K];
+        size_t ml[K], n1 = 0;
+        uint16_t v1[DEGREE_N], c1[DEGREE_N];
+        int ok = 1, nb = 0;
+        memset(b, 0, sizeof(b));
+        memset(m, 0, sizeof(m));
+        ok = evmlr_first_batch(&b[0], pp.data, pp.len, ballot_ptr, ballot_len, 1) == EVMLR_OK;
+        nb = ok;
+        for (int j = 0; ok && j < K; j++) {
+            ok = evmlr_mix(&b[j + 1], &m[j], pp.data, pp.len, kp[j].data, kp[j].len, b[j].data, b[j].len,
+                           j ? m[j - 1].data : NULL, j ? m[j - 1].len : 0) == EVMLR_OK;
+            if (ok) {
+                nb = j + 2;
+                mp[j] = m[j].data;
+                ml[j] = m[j].len;
+            }
+        }
+        ok = ok && evmlr_results(v1, 1, &n1, pp.data, pp.len, b[K].data, b[K].len) == EVMLR_OK && n1 == 1 && v1[0] == choice[0];
+        ok = ok && evmlr_transcript(&t, pp.data, pp.len, mp, ml, K) == EVMLR_OK;
+        ok = ok && evmlr_verify(c1, 1, &n1, pp.data, pp.len, ballot_ptr, ballot_len, 1, t.data, t.len) == EVMLR_OK
+                && n1 == 1 && c1[0] == choice[0];
+        for (int i = 0; i < nb; i++) evmlr_bytes_free(&b[i]);
+        for (int i = 0; i + 1 < nb; i++) evmlr_bytes_free(&m[i]);
+        evmlr_bytes_free(&t);
+        TEST_ASSERT(ok, end);
     } TEST_END;
 
 end:

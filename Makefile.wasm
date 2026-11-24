@@ -55,7 +55,7 @@ NODE_LDFLAGS = $(LDFLAGS) -sENVIRONMENT=node -sEXIT_RUNTIME=1
 # It exports the byte-string API of evmlr_api.h as is; wasm/evmlr.mjs wraps it.
 # Voter ids are int64_t: Emscripten passes them to and from JS as BigInt.
 LIB_FUNCS  = bytes_free strerror modulus vote_len keygen params params_info cast check_ballot
-LIB_FUNCS += first_batch mix mix_info transcript verify results
+LIB_FUNCS += first_batch mix mix_info verify_mixes transcript verify results
 comma := ,
 empty :=
 space := $(empty) $(empty)

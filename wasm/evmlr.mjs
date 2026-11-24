@@ -20,6 +20,7 @@
 //   let batch = evmlr.firstBatch(pp, board);             // server 0's input
 //   const mixes = [];
 //   for (let j = 0; j < k; j++) {                        // server j, with its own key only
+//     evmlr.verifyMixes(pp, board, mixes);               // servers 0..j-1 checked first
 //     const step = evmlr.mix(pp, keyPairOfServer[j], batch, mixes[j - 1] ?? null);
 //     mixes.push(step.mix);                              // publish
 //     batch = step.batch;                                // hand to server j + 1
@@ -32,6 +33,8 @@
 // bytes the native library reads and writes. A vote is a number (the first
 // coefficient) or an array of up to evmlr.voteLen coefficients mod
 // evmlr.modulus; votes come back as Uint16Arrays of voteLen coefficients.
+// Voter ids are 64-bit signed integers, as in the native build: pass a
+// BigInt or a safe-integer Number; they come back as BigInts.
 // Casting and mixing take seconds: in a page, run them in a Web Worker.
 import createEvmlrModule from './build/evmlr.mjs';
 
@@ -130,10 +133,16 @@ export async function loadEvmlr(moduleArgs = {}) {
     return votes;
   }
 
-  const readInt64 = (p) => {
-    const lo = M.HEAPU32[p >>> 2], hi = M.HEAP32[(p >>> 2) + 1];
-    return hi * 2 ** 32 + lo;
-  };
+  const readInt64 = (p) => (BigInt(M.HEAP32[(p >>> 2) + 1]) << 32n) | BigInt(M.HEAPU32[p >>> 2]);
+
+  function voterIdIn(id) {
+    if (typeof id === 'number' && !Number.isSafeInteger(id)) {
+      throw new RangeError('a voter id Number must be a safe integer; pass a BigInt for larger ids');
+    }
+    const big = BigInt(id);
+    if (big !== BigInt.asIntN(64, big)) throw new RangeError('a voter id is a 64-bit signed integer');
+    return big;
+  }
 
   return {
     modulus,
@@ -177,17 +186,24 @@ export async function loadEvmlr(moduleArgs = {}) {
       });
     },
 
-    /** Encrypts and proves a vote for voterId (an integer). Returns the ballot. */
+    /**
+     * Encrypts and proves a vote for voterId (a BigInt, or a safe-integer
+     * Number), and checks every layer before returning. Returns the ballot.
+     */
     cast(pp, voterId, vote) {
       return scoped((alloc) => {
         const out = bytesOut(alloc);
         const [v, n] = voteIn(alloc, vote);
-        check('cast', M._evmlr_cast(out, bytesIn(alloc, pp), pp.length, BigInt(voterId), v, n));
+        check('cast', M._evmlr_cast(out, bytesIn(alloc, pp), pp.length, voterIdIn(voterId), v, n));
         return takeBytes(out);
       });
     },
 
-    /** The bulletin board's check. Returns the ballot's voter id; throws EvmlrError if invalid. */
+    /**
+     * The bulletin board's check: the ballot is for this election, unchanged
+     * since it was cast, and bound to its voter id. Returns the voter id (a
+     * BigInt); throws EvmlrError if invalid.
+     */
     checkBallot(pp, ballot) {
       return scoped((alloc) => {
         const id = alloc(8);
@@ -254,6 +270,24 @@ export async function loadEvmlr(moduleArgs = {}) {
           rejected.push({ index: M.HEAPU32[(idx >>> 2) + r], reason: REJECT_REASONS[code] ?? code });
         }
         return { server: M.HEAPU32[f >>> 2], received: M.HEAPU32[(f >>> 2) + 1], passedOn: M.HEAPU32[(f >>> 2) + 2], rejected };
+      });
+    },
+
+    /**
+     * Checks the first mixes.length records (server 0's first) against the
+     * ballots on the board, as verify would. Server j calls it with the j
+     * records before its own, before mixing. Returns how many ciphertexts
+     * the last of them passed on (with no records: how many ballots count);
+     * throws EvmlrError (status 12) if any fails.
+     */
+    verifyMixes(pp, ballots, mixes) {
+      return scoped((alloc) => {
+        const n = alloc(4);
+        const [bp, bl] = listIn(alloc, ballots);
+        const [mp, ml] = listIn(alloc, mixes);
+        check('verifyMixes', M._evmlr_verify_mixes(n, bytesIn(alloc, pp), pp.length, bp, bl, ballots.length,
+                                                   mp, ml, mixes.length));
+        return M.HEAPU32[n >>> 2];
       });
     },
 

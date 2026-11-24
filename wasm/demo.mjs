@@ -6,9 +6,10 @@
 //   - the authority builds the public parameters from the public keys only;
 //   - voters cast (voter 2 votes twice; the second vote counts);
 //   - the bulletin board checks every ballot, and refuses one copied under
-//     another voter id;
+//     another voter id or changed anywhere;
 //   - the servers mix one after the other, each with its own key, each
-//     checking that its input is what the previous server published;
+//     checking the records before its own and that its input is what the
+//     previous server published;
 //   - an auditor checks the count from public data.
 import { loadEvmlr, EvmlrError } from './evmlr.mjs';
 
@@ -41,11 +42,12 @@ console.log(`parameters: ${pp.length} B, ${evmlr.paramsInfo(pp).servers} servers
 
 // Voters, and the bulletin board.
 const board = [];
-for (const [voter, vote] of [[1, 10], [2, 99], [3, 30], [2, 20], [4, 40], [5, 50]]) {
+// Voter 5's id needs more than 32 bits: ids are 64-bit in every build.
+for (const [voter, vote] of [[1, 10], [2, 99], [3, 30], [2, 20], [4, 40], [2n ** 40n + 5n, 50]]) {
   t = performance.now();
   const ballot = evmlr.cast(pp, voter, vote);
   const who = evmlr.checkBallot(pp, ballot);
-  ok &&= who === voter;
+  ok &&= who === BigInt(voter);
   board.push(ballot);
   console.log(`voter ${voter} casts ${vote}: ${ms(t)}, ${ballot.length} B, accepted`);
 }
@@ -56,12 +58,17 @@ const copy = board[0].slice();
 copy[20] = 6;
 ok &&= expectError('ballot copied under voter 6', () => evmlr.checkBallot(pp, copy));
 ok &&= expectError('truncated ballot', () => evmlr.checkBallot(pp, board[0].slice(0, -1)));
+// One bit changed deep inside the ballot, in a proof of an inner layer.
+const flipped = board[0].slice();
+flipped[flipped.length - 1000] ^= 1;
+ok &&= expectError('ballot changed in an inner proof', () => evmlr.checkBallot(pp, flipped));
 
 // Mixing: server j takes the batch server j - 1 handed on, with its record.
 let batch = evmlr.firstBatch(pp, board);
 const mixes = [];
 for (let j = 0; j < K; j++) {
   t = performance.now();
+  ok &&= evmlr.verifyMixes(pp, board, mixes) === 5; // servers 0..j-1, before mixing
   const step = evmlr.mix(pp, servers[j].keyPair, batch, j > 0 ? mixes[j - 1] : null);
   const info = evmlr.mixInfo(pp, step.mix);
   console.log(`server ${j}: ${ms(t)}; ${info.received} in, ${info.passedOn} out, rejected ${JSON.stringify(info.rejected)}; record ${step.mix.length} B`);
@@ -82,6 +89,21 @@ const tampered = transcript.slice();
 tampered[tampered.length - 100] ^= 1;
 ok &&= expectError('tampered transcript', () => evmlr.verify(pp, board, tampered));
 ok &&= expectError('count against a board missing a ballot', () => evmlr.verify(pp, board.slice(1), transcript));
+const badMix = mixes[0].slice();
+badMix[badMix.length - 100] ^= 1;
+ok &&= expectError('a bad record of server 0, before server 1 mixes', () => evmlr.verifyMixes(pp, board, [badMix]));
+
+// A one-ballot election is mixed and counted too.
+let single = evmlr.firstBatch(pp, board.slice(0, 1));
+const singleMixes = [];
+for (let j = 0; j < K; j++) {
+  const step = evmlr.mix(pp, servers[j].keyPair, single, j > 0 ? singleMixes[j - 1] : null);
+  singleMixes.push(step.mix);
+  single = step.batch;
+}
+const singleVotes = evmlr.verify(pp, board.slice(0, 1), evmlr.transcript(pp, singleMixes)).map((v) => v[0]);
+console.log('one-ballot election, verified tally:', singleVotes);
+ok &&= JSON.stringify(singleVotes) === '[10]';
 
 const expected = [10, 20, 30, 40, 50];
 const sorted = (xs) => JSON.stringify([...xs].sort((a, b) => a - b));

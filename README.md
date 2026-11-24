@@ -99,14 +99,18 @@ Each party runs only its own step, and only bytes pass between them:
 2. the public parameters are built from the election id and the k public
    keys (`evmlr_voting_pp_init`). The OTSE matrices and the shuffle's
    commitment key are expanded from hashes, so nobody chooses them;
-3. voters cast ballots; the bulletin board accepts a ballot only if
-   `evmlr_voting_check_ballot` holds. The proofs are bound to the election id
-   and the voter id, so a ballot copied under another voter id, or replayed
-   in another election, is refused;
-4. server j = 0, ..., k − 1 in turn runs `evmlr_voting_mix_step` with its own
-   key: it decrypts its layer, drops every ciphertext whose proof of
+3. voters cast ballots; casting checks every layer's proof before the
+   ballot leaves the voter. The bulletin board accepts a ballot only if
+   `evmlr_voting_check_ballot` holds. The proofs are bound to the election
+   id and the voter id, and the outer one to every byte of the ballot, so a
+   ballot copied under another voter id, replayed in another election, or
+   changed anywhere, is refused;
+4. server j = 0, ..., k − 1 in turn checks the records of servers 0..j − 1
+   (`evmlr_voting_verify_mixes`), then runs `evmlr_voting_mix_step` with its
+   own key: it decrypts its layer, drops every ciphertext whose proof of
    encryption fails (publishing which and why), shuffles the rest and proves
-   the shuffle. It hands a batch to server j + 1 and publishes a mix record;
+   the shuffle. It hands a batch to server j + 1 and publishes a mix record.
+   A single ciphertext left is mixed too, shuffled with a copy of itself;
 5. anyone checks the k mix records against the board
    (`evmlr_voting_verify_counting`).
 
@@ -126,8 +130,9 @@ ballot with a valid one of their own.
 `evmlr_api.h` is the entry point for an external application: a C ABI on
 byte strings, with no FLINT types in the header, one function per party and
 step (`evmlr_keygen`, `evmlr_params`, `evmlr_cast`, `evmlr_check_ballot`,
-`evmlr_first_batch`, `evmlr_mix`, `evmlr_mix_info`, `evmlr_transcript`,
-`evmlr_verify`, `evmlr_results`). `make shared` builds it into `libevmlr.so`;
+`evmlr_first_batch`, `evmlr_verify_mixes`, `evmlr_mix`, `evmlr_mix_info`,
+`evmlr_transcript`, `evmlr_verify`, `evmlr_results`). Voter ids are
+`int64_t` in every build, the browser's included. `make shared` builds it into `libevmlr.so`;
 the WebAssembly module exports the same functions, and `wasm/evmlr.mjs` wraps
 them for JavaScript. `make api` runs an election through it end to end.
 
@@ -183,32 +188,31 @@ so editing it rebuilds everything that depends on it.
       encrypt. For the same reason a rejection for a failed OTSE proof, which
       needs the decryption, cannot be checked by others (a rejection for the
       ML-PKE proof at server 0 can, and `evmlr_voting_verify_counting` does).
-- [ ] Mix a single remaining ciphertext. The proof of shuffle needs N >= 2,
-      so `evmlr_voting_mix_step` returns `EVMLR_VOTING_ERR_TOO_FEW` when one
-      is left (which a shuffle could not hide anyway).
-- [ ] Check all of a ballot before it goes on the board.
-      `evmlr_voting_check_ballot` checks only the ML-PKE half of the
-      outermost proof, which sits in the first ~2.3 KB of a ~100 KB ballot
-      (k = 3). Flipping one bit almost anywhere else still passes it: about
-      90% of single-bit changes in a sampled scan. The mix server whose
-      layer was changed rejects the ciphertext later (HPKE or OTSE reason)
-      and the vote is not counted, so integrity holds, but:
-      - the board accepts ballots that will never count, and the voter is
-        not told when casting;
-      - since the last ballot of each voter counts, a corrupted revote
-        replaces an earlier valid ballot, and the voter is left with no
-        vote.
-
-      The single proof of the first item, checked in full at casting time,
-      would close this too.
-- [ ] Verify a partial chain of mix records. `evmlr_verify` needs all k
-      records and the board, so neither server j nor the ballot box can
-      check servers 0..j − 1's proofs of shuffle before server j mixes.
-      `evmlr_mix` only checks that its input batch is what the previous
-      record says was output. A bad proof therefore shows up only in the
-      final verification, after every server has mixed. A call that checks
-      records 0..j − 1 against the board, without needing the rest, would
-      let each server refuse a bad chain before it starts.
+- [x] Mix a single remaining ciphertext. The proof of shuffle needs N >= 2,
+      so a single ciphertext is shuffled with a copy of itself: the mix
+      record's statement holds it twice, `evmlr_voting_verify_mixes` checks
+      the copies are equal, and one is passed on. `EVMLR_VOTING_ERR_TOO_FEW`
+      (and `EVMLR_ERR_TOO_FEW`, 13) are gone. A shuffle of one hides
+      nothing, which no construction could change.
+- [x] Check all of a ballot before it goes on the board.
+      `evmlr_voting_check_ballot` used to check only the ML-PKE half of the
+      outermost proof, and about 90% of single-bit changes elsewhere in a
+      ballot passed it. Now the ML-PKE half of every proof of encryption
+      also hashes the OTSE half and the OTSE ciphertext, and the outermost
+      label hashes the inner layers' proofs, so the board's check covers
+      every byte (0 of 400 random single-bit changes pass). Casting also
+      checks every layer against its plaintext before it returns
+      (`evmlr_cast` fails with `EVMLR_ERR_INVALID` otherwise), so an honest
+      client never casts a ballot a server would reject, and a corrupted
+      revote can no longer replace a valid ballot unnoticed. What remains
+      is that the board cannot check the inner layers were *made* correctly
+      by a dishonest client, which loses only that voter's vote; the
+      paper's single proof of the first item would close that.
+- [x] Verify a partial chain of mix records. `evmlr_voting_verify_mixes`
+      (`evmlr_verify_mixes` in the API, `verifyMixes` in JavaScript) checks
+      records 0..j − 1 against the board, without the rest, so server j
+      refuses a bad chain before it mixes and the board can check after
+      every step. `evmlr_verify` checks the same and the whole transcript.
 - [ ] Prove that a vote is well formed. A vote is any EVMLR_VOTE_LEN
       coefficients mod q, and nothing proves it encodes a valid answer (for
       an n-out-of-m question: coefficients in {0, 1} and at most n set).
@@ -217,16 +221,11 @@ so editing it rebuilds everything that depends on it.
       them). A proof of well-formedness, for n-out-of-m first and later for
       the polynomials ranked and transferable votes need, would let the
       board refuse such ballots instead.
-- [ ] Make voter ids the same size in every build. They are FLINT `slong`,
-      which is 64 bits natively but 32 bits on wasm32, so `evmlr_cast` in the
-      browser refuses any id of 2^31 or more (`EVMLR_ERR_ARG`) while the
-      native build accepts it. An application that hands out 64-bit ids gets
-      voters who cannot cast. Also, `wasm/evmlr.mjs` reads ids back
-      (`checkBallot`) as a JavaScript number, which loses precision above
-      2^53; returning a BigInt (or a decimal string) would be exact. Until
-      this changes, applications should keep ids in 1 .. 2^31 − 1 (the
-      mixnet-voting ballot box does). A fixed-width `int64_t` id in the
-      ballot and in `evmlr_voting_submission_t` would fix both.
+- [x] Make voter ids the same size in every build. They are `int64_t` in
+      the ballot, `evmlr_voting_submission_t` and batches, so the browser
+      accepts the same ids as the native build. `wasm/evmlr.mjs` takes a
+      BigInt or a safe-integer Number, and `checkBallot` returns a BigInt,
+      exact above 2^53.
 - [ ] Optimize the implementation for performance. Multiplication in R_q now
       uses the CRT decomposition (`evmlr_crt.c`); the remaining headroom is in
       keeping operands in the split representation between operations instead

@@ -55,12 +55,13 @@ const pp = evmlr.params(id, publicKeys);                     // in mixing order
 const ballot = evmlr.cast(pp, voterId, candidate);
 
 // Bulletin board
-evmlr.checkBallot(pp, ballot);       // the voter id, or throws EvmlrError
+evmlr.checkBallot(pp, ballot);       // the voter id (a BigInt), or throws EvmlrError
 
 // Servers, one after the other, each with its own key pair
 let batch = evmlr.firstBatch(pp, board);
 const mixes = [];
 for (let j = 0; j < k; j++) {
+  evmlr.verifyMixes(pp, board, mixes); // servers 0..j-1, before server j mixes
   const step = evmlr.mix(pp, keyPairOfServer[j], batch, j ? mixes[j - 1] : null);
   mixes.push(step.mix);              // publish
   batch = step.batch;                // send to server j + 1
@@ -74,13 +75,19 @@ const verified = evmlr.verify(pp, board, evmlr.transcript(pp, mixes));
 
 A vote is a number or up to `evmlr.voteLen` (512) coefficients mod
 `evmlr.modulus` (3109); votes come back as `Uint16Array`s of 512
-coefficients, so `v[0]` is the candidate number. Errors throw `EvmlrError`,
+coefficients, so `v[0]` is the candidate number. Voter ids are 64-bit
+signed integers, as natively: `cast` takes a BigInt or a safe-integer
+Number, and `checkBallot` returns a BigInt. Errors throw `EvmlrError`,
 whose `status` is an `evmlr_status`. No handles are kept: every call decodes
 its inputs, and all WASM memory is freed before it returns.
 
 `evmlr.mix` refuses a key pair that is not the batch's server's
 (`EVMLR_ERR_KEY`), and for server j > 0 a batch that is not what server
-j − 1's record says it output (`EVMLR_ERR_INVALID`).
+j − 1's record says it output (`EVMLR_ERR_INVALID`). That checks the
+hand-over only; `evmlr.verifyMixes(pp, board, mixes.slice(0, j))` checks the
+proofs of servers 0..j − 1, so server j can refuse a bad chain before it
+mixes instead of after everyone has. A single ciphertext left is mixed like
+any other (see below).
 
 ## Serialization format
 
@@ -90,7 +97,7 @@ ballots with their proofs of correct encryption, batches, mix records,
 proofs of shuffle with their statements, and counting transcripts. Every
 encoding has:
 
-- a 20-byte header: magic, format version (3), object type, and a
+- a 20-byte header: magic, format version (4), object type, and a
   fingerprint of the scheme parameters (`MOD_Q`, `DEGREE_N`, `K_LWE`, ...),
   so bytes from a build with different parameters are refused;
 - fixed-width little-endian integers, the same on wasm32 and x86-64;
@@ -127,10 +134,15 @@ carries the voter ids). A mix record is what server j publishes:
   the ML-PKE half of the proof of encryption fails, or the OTSE half fails
   against the decryption;
 - the statement of its shuffle of the rest (the commitment `D`, the outputs
-  `c_hat`, the inputs `c_star`) and the proof.
+  `c_hat`, the inputs `c_star`) and the proof. The proof of shuffle needs
+  two ciphertexts, so when one is left it is shuffled with a copy of
+  itself: the statement holds it twice, the verifier checks the two copies
+  are equal, and one is passed on. That hides nothing, as no shuffle of one
+  could; an application may prefer not to count an election that small.
 
 A transcript is the k mix records. `evmlr_voting_verify_counting` checks it
-with public data only:
+with public data only (and `evmlr_voting_verify_mixes` the same of its first
+m records, for a server or the board to run between steps):
 
 - of the ballots that pass the public check, the last of each voter makes
   server 0's input, in board order. A ballot that fails the check is skipped
@@ -162,6 +174,16 @@ bulletin board checks it on arrival. Inner layers are not bound to the
 voter: their ciphertexts stay hidden inside the outer layer until server 0
 decrypts it, and binding them would make the servers carry voter ids past
 the shuffles.
+
+The ML-PKE half of every proof of encryption also hashes a digest of the
+OTSE half and of the OTSE ciphertext, and the outermost label hashes a
+digest of the inner layers' proofs. So the board's check covers every byte
+of the ballot: one changed anywhere fails it (0 of 400 random single-bit
+changes passed, against about 9 in 10 before). What the board still cannot
+check is that the inner layers were made correctly, which only the servers
+see as they decrypt; `cast` checks every layer against its plaintext before
+it returns, so an honest client never casts a ballot that a server would
+reject, and a dishonest one loses only its own vote.
 
 ## What changes for WebAssembly
 

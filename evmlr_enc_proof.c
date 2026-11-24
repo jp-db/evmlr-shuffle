@@ -1,5 +1,6 @@
 #include "evmlr_enc_proof.h"
 #include "evmlr_utils.h"
+#include "evmlr_challenge.h"
 #include <stdlib.h>
 #include <string.h>
 
@@ -74,19 +75,70 @@ static void ctx_otse_init(evmlr_lin_proof_ctx_t ctx, slong L) {
 }
 
 /* The two proofs hash the label behind a tag of their own, so neither can be
- * passed off as the other. */
+ * passed off as the other. The ML-PKE half also hashes a digest of the OTSE
+ * half and of the OTSE ciphertext it proves: the ML-PKE half is the one
+ * anyone can check, and with the digest it holds only for the exact proof
+ * and ciphertext it was made with. Without it, every bit of a ballot outside
+ * the ML-PKE ciphertexts and their proof could be changed unnoticed until a
+ * mixing server decrypted it. */
 #define LABEL_MAX 256
 
-static size_t tagged_label(uint8_t out[LABEL_MAX + 1], uint8_t tag, const uint8_t* label, size_t len) {
-    if (len == 0) {
+static size_t tagged_label(uint8_t out[LABEL_MAX + 1 + SHA256HashSize], uint8_t tag, const uint8_t* label, size_t len,
+                           const uint8_t binding[SHA256HashSize]) {
+    size_t n = 0;
+    if (len == 0 && binding == NULL) {
         return 0; // unlabelled, as before labels existed
     }
     if (len > LABEL_MAX) {
         len = LABEL_MAX; // callers pass hashes; longer labels are cut, not overrun
     }
-    out[0] = tag;
-    memcpy(out + 1, label, len);
-    return len + 1;
+    out[n++] = tag;
+    if (len > 0) {
+        memcpy(out + n, label, len);
+        n += len;
+    }
+    if (binding != NULL) {
+        memcpy(out + n, binding, SHA256HashSize);
+        n += SHA256HashSize;
+    }
+    return n;
+}
+
+/* The digest of an OTSE proof and of the first rows of c it is about (as
+ * many as the proof's statement has). 0 if c is shorter than that. */
+static int otse_binding(uint8_t out[SHA256HashSize], const evmlr_lin_proof_struct* p, const nmod_poly_mat_t c) {
+    static const char domain[] = "evmlr enc proof otse binding v1";
+    const slong L = nmod_poly_mat_nrows(p->w);
+    evmlr_challenge_t chal;
+
+    if (nmod_poly_mat_nrows(c) < L || nmod_poly_mat_ncols(c) != 1) {
+        return 0;
+    }
+    evmlr_challenge_init(chal);
+    evmlr_challenge_add_bytes(chal, (const uint8_t *) domain, sizeof(domain) - 1);
+    evmlr_challenge_add_matrix(chal, p->w);
+    evmlr_challenge_add_matrix(chal, p->z_1);
+    evmlr_challenge_add_matrix(chal, p->z_2);
+    for (slong r = 0; r < L; r++) {
+        evmlr_challenge_add_poly(chal, nmod_poly_mat_entry(c, r, 0));
+    }
+    evmlr_challenge_get_hash(out, chal);
+    return 1;
+}
+
+void evmlr_enc_proof_digest(uint8_t out[SHA256HashSize], const evmlr_enc_proof_t proof) {
+    static const char domain[] = "evmlr enc proof digest v1";
+    evmlr_challenge_t chal;
+
+    evmlr_challenge_init(chal);
+    evmlr_challenge_add_bytes(chal, (const uint8_t *) domain, sizeof(domain) - 1);
+    evmlr_challenge_add_matrix(chal, proof->proof_hpke.w);
+    evmlr_challenge_add_matrix(chal, proof->proof_hpke.z_1);
+    evmlr_challenge_add_matrix(chal, proof->proof_hpke.z_2);
+    evmlr_challenge_add_matrix(chal, proof->proof_otse.w);
+    evmlr_challenge_add_matrix(chal, proof->proof_otse.z_1);
+    evmlr_challenge_add_matrix(chal, proof->proof_otse.z_2);
+    evmlr_challenge_get_hash(out, chal);
 }
 
 void evmlr_enc_proof_init(evmlr_enc_proof_t proof, slong L_curr) {
@@ -130,11 +182,45 @@ void evmlr_enc_proof_prove(evmlr_enc_proof_t proof,
                            slong L_max,
                            const uint8_t* label,
                            size_t label_len) {
-    uint8_t lab_hpke[LABEL_MAX + 1], lab_otse[LABEL_MAX + 1];
-    size_t len_hpke = tagged_label(lab_hpke, 'H', label, label_len);
-    size_t len_otse = tagged_label(lab_otse, 'O', label, label_len);
+    uint8_t lab_hpke[LABEL_MAX + 1 + SHA256HashSize], lab_otse[LABEL_MAX + 1 + SHA256HashSize];
+    uint8_t binding[SHA256HashSize];
+    size_t len_otse = tagged_label(lab_otse, 'O', label, label_len, NULL);
+    size_t len_hpke;
 
-    // 1. HPKE proof of correct encryption
+    // 1. OTSE proof of correct encryption (first: the ML-PKE half is bound to it)
+    slong otse_m = 2 * ETA * (K_LWE + L_in);
+    nmod_poly_mat_t A_otse, s1_otse, s2_otse, t_otse;
+    nmod_poly_mat_init(A_otse, L_in, otse_m, MOD_Q);
+    nmod_poly_mat_init(s1_otse, otse_m, 1, MOD_Q);
+    nmod_poly_mat_init(s2_otse, L_in, 1, MOD_Q);
+    nmod_poly_mat_init(t_otse, L_in, 1, MOD_Q);
+
+    build_A_otse(A_otse, otse_ctx->H_prime, L_in);
+    truncate_d_dagger(s1_otse, d_dagger, L_in, L_max);
+    nmod_poly_mat_zero(s2_otse);
+
+    for (slong i = 0; i < L_in; i++) {
+        nmod_poly_sub(nmod_poly_mat_entry(t_otse, i, 0),
+                      nmod_poly_mat_entry(cipher->otse_cipher->c, i, 0),
+                      nmod_poly_mat_entry(plaintext, i, 0));
+    }
+
+    evmlr_lin_proof_ctx_t ctx_otse;
+    ctx_otse_init(ctx_otse, L_in);
+    ctx_otse->label = lab_otse;
+    ctx_otse->label_len = len_otse;
+    evmlr_lin_prove(&proof->proof_otse, A_otse, s1_otse, s2_otse, t_otse, ctx_otse);
+    evmlr_lin_proof_ctx_clear(ctx_otse);
+
+    nmod_poly_mat_clear(A_otse);
+    nmod_poly_mat_clear(s1_otse);
+    nmod_poly_mat_clear(s2_otse);
+    nmod_poly_mat_clear(t_otse);
+
+    // 2. HPKE proof of correct encryption
+    otse_binding(binding, &proof->proof_otse, cipher->otse_cipher->c);
+    len_hpke = tagged_label(lab_hpke, 'H', label, label_len, binding);
+
     slong hpke_dim = K_LWR * (K_LWE + 1);
     nmod_poly_mat_t A_hpke, s1_hpke, s2_hpke, t_hpke;
     nmod_poly_mat_init(A_hpke, hpke_dim, hpke_dim, MOD_Q);
@@ -173,36 +259,6 @@ void evmlr_enc_proof_prove(evmlr_enc_proof_t proof,
     nmod_poly_mat_clear(s1_hpke);
     nmod_poly_mat_clear(s2_hpke);
     nmod_poly_mat_clear(t_hpke);
-
-    // 2. OTSE proof of correct encryption
-    slong otse_m = 2 * ETA * (K_LWE + L_in);
-    nmod_poly_mat_t A_otse, s1_otse, s2_otse, t_otse;
-    nmod_poly_mat_init(A_otse, L_in, otse_m, MOD_Q);
-    nmod_poly_mat_init(s1_otse, otse_m, 1, MOD_Q);
-    nmod_poly_mat_init(s2_otse, L_in, 1, MOD_Q);
-    nmod_poly_mat_init(t_otse, L_in, 1, MOD_Q);
-
-    build_A_otse(A_otse, otse_ctx->H_prime, L_in);
-    truncate_d_dagger(s1_otse, d_dagger, L_in, L_max);
-    nmod_poly_mat_zero(s2_otse);
-
-    for (slong i = 0; i < L_in; i++) {
-        nmod_poly_sub(nmod_poly_mat_entry(t_otse, i, 0),
-                      nmod_poly_mat_entry(cipher->otse_cipher->c, i, 0),
-                      nmod_poly_mat_entry(plaintext, i, 0));
-    }
-
-    evmlr_lin_proof_ctx_t ctx_otse;
-    ctx_otse_init(ctx_otse, L_in);
-    ctx_otse->label = lab_otse;
-    ctx_otse->label_len = len_otse;
-    evmlr_lin_prove(&proof->proof_otse, A_otse, s1_otse, s2_otse, t_otse, ctx_otse);
-    evmlr_lin_proof_ctx_clear(ctx_otse);
-
-    nmod_poly_mat_clear(A_otse);
-    nmod_poly_mat_clear(s1_otse);
-    nmod_poly_mat_clear(s2_otse);
-    nmod_poly_mat_clear(t_otse);
 }
 
 int evmlr_enc_proof_verify_hpke(const evmlr_enc_proof_t proof,
@@ -210,10 +266,14 @@ int evmlr_enc_proof_verify_hpke(const evmlr_enc_proof_t proof,
                                 const evmlr_hpke_cipher_t cipher,
                                 const uint8_t* label,
                                 size_t label_len) {
-    uint8_t lab[LABEL_MAX + 1];
-    size_t lab_len = tagged_label(lab, 'H', label, label_len);
+    uint8_t lab[LABEL_MAX + 1 + SHA256HashSize], binding[SHA256HashSize];
+    size_t lab_len;
     slong hpke_dim = K_LWR * (K_LWE + 1);
     nmod_poly_mat_t A_hpke, t_hpke;
+    if (!otse_binding(binding, &proof->proof_otse, cipher->otse_cipher->c)) {
+        return 0;
+    }
+    lab_len = tagged_label(lab, 'H', label, label_len, binding);
     nmod_poly_mat_init(A_hpke, hpke_dim, hpke_dim, MOD_Q);
     nmod_poly_mat_init(t_hpke, hpke_dim, 1, MOD_Q);
 
@@ -248,8 +308,8 @@ int evmlr_enc_proof_verify_otse(const evmlr_enc_proof_t proof,
                                 const uint8_t* label,
                                 size_t label_len) {
     slong L_in = decrypted_plaintext->r;
-    uint8_t lab[LABEL_MAX + 1];
-    size_t lab_len = tagged_label(lab, 'O', label, label_len);
+    uint8_t lab[LABEL_MAX + 1 + SHA256HashSize];
+    size_t lab_len = tagged_label(lab, 'O', label, label_len, NULL);
 
     if (cipher->otse_cipher->c->r < L_in) return 0;
 
@@ -367,6 +427,26 @@ void test_enc_proof(flint_rand_t state) {
         TEST_ASSERT(evmlr_enc_proof_verify_hpke(proof, keypair->enc_keypair->pk, cipher, NULL, 0) == 0, end);
         TEST_ASSERT(evmlr_enc_proof_verify(proof, keypair->enc_keypair->pk, hpke_ctx->otse_ctx,
                                            cipher, msg, L_max, lab_b, sizeof(lab_b)) == 0, end);
+    } TEST_END;
+
+    TEST_BEGIN("the public half fails if the OTSE half or ciphertext changes") {
+        nmod_poly_struct* z = nmod_poly_mat_entry(proof->proof_otse.z_1, 0, 0);
+        nmod_poly_struct* c = nmod_poly_mat_entry(cipher->otse_cipher->c, L_in - 1, 0);
+        ulong z0, c0;
+
+        evmlr_enc_proof_prove(proof, keypair->enc_keypair->pk, hpke_ctx->otse_ctx,
+                              r_mats, e2_mats, e3_polys, key, cipher, d_dagger,
+                              msg, L_in, L_max, NULL, 0);
+        z0 = nmod_poly_get_coeff_ui(z, 0);
+        c0 = nmod_poly_get_coeff_ui(c, 0);
+        TEST_ASSERT(evmlr_enc_proof_verify_hpke(proof, keypair->enc_keypair->pk, cipher, NULL, 0) == 1, end);
+        nmod_poly_set_coeff_ui(z, 0, (z0 + 1) % MOD_Q);
+        TEST_ASSERT(evmlr_enc_proof_verify_hpke(proof, keypair->enc_keypair->pk, cipher, NULL, 0) == 0, end);
+        nmod_poly_set_coeff_ui(z, 0, z0);
+        nmod_poly_set_coeff_ui(c, 0, (c0 + 1) % MOD_Q);
+        TEST_ASSERT(evmlr_enc_proof_verify_hpke(proof, keypair->enc_keypair->pk, cipher, NULL, 0) == 0, end);
+        nmod_poly_set_coeff_ui(c, 0, c0);
+        TEST_ASSERT(evmlr_enc_proof_verify_hpke(proof, keypair->enc_keypair->pk, cipher, NULL, 0) == 1, end);
     } TEST_END;
 
 end:

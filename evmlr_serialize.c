@@ -618,7 +618,7 @@ int evmlr_serialize_submission(evmlr_buf_t *out, const evmlr_voting_submission_t
         return EVMLR_SER_ERR_ARG;
     }
     put_header(&w, EVMLR_SER_SUBMISSION);
-    put_u64(&w, (uint64_t) (int64_t) sub->voter_id);
+    put_u64(&w, (uint64_t) sub->voter_id);
     for (int i = 0; i < K_LWR; i++) {
         put_mat(&w, layer->enc_cipher[i]->uT);
         put_poly(&w, layer->enc_cipher[i]->v);
@@ -641,12 +641,8 @@ int evmlr_deserialize_submission(evmlr_voting_submission_t sub, const evmlr_voti
     if (r.err) {
         return r.err;
     }
-    if ((int64_t) (slong) voter_id != voter_id) { /* slong is 32 bits on wasm32 */
-        return EVMLR_SER_ERR_VALUE;
-    }
-
     evmlr_voting_submission_init(sub, pp);
-    sub->voter_id = (slong) voter_id;
+    sub->voter_id = voter_id;
     layer = sub->ballot->layer;
     for (int i = 0; i < K_LWR; i++) {
         get_mat(&r, layer->enc_cipher[i]->uT);
@@ -843,7 +839,7 @@ int evmlr_serialize_batch(evmlr_buf_t *out, const evmlr_voting_batch_t batch, co
     put_u32(&w, (uint64_t) batch->n);
     for (slong i = 0; i < batch->n && !w.err; i++) {
         if (batch->layer == 0) {
-            put_u64(&w, (uint64_t) (int64_t) batch->voter_ids[i]);
+            put_u64(&w, (uint64_t) batch->voter_ids[i]);
         }
         put_mat(&w, batch->msgs[i]);
         for (slong l = 0; l < nprf; l++) {
@@ -881,11 +877,7 @@ int evmlr_deserialize_batch(evmlr_voting_batch_t batch, const evmlr_voting_pp_t 
     }
     for (slong i = 0; i < (slong) n && !r.err; i++) {
         if (layer == 0) {
-            int64_t id = (int64_t) get_u64(&r);
-            if (!r.err && (int64_t) (slong) id != id) { /* slong is 32 bits on wasm32 */
-                r.err = EVMLR_SER_ERR_VALUE;
-            }
-            batch->voter_ids[i] = (slong) id;
+            batch->voter_ids[i] = (int64_t) get_u64(&r);
         }
         get_mat(&r, batch->msgs[i]);
         for (slong l = 0; l < nprf; l++) {
@@ -909,14 +901,14 @@ static void put_mix_body(writer_t *w, const evmlr_voting_mix_struct *mix) {
         put_uint(w, mix->reasons[r], 1);
     }
     if (mix->N > 0) {
-        put_statement(w, mix->statement, mix->N);
+        put_statement(w, mix->statement, evmlr_voting_shuffle_len(mix->N));
         put_shuffle_proof(w, mix->proof);
     }
 }
 
 static int check_mix(const evmlr_voting_mix_struct *mix, const evmlr_voting_pp_t pp) {
     if (mix->k != pp->k || mix->j < 0 || mix->j >= pp->k || mix->n_in < 0 || mix->n_rejected < 0
-        || mix->N != mix->n_in - mix->n_rejected || mix->N == 1
+        || mix->N != mix->n_in - mix->n_rejected
         || (mix->n_rejected > 0 && (mix->rejected == NULL || mix->reasons == NULL))) {
         return EVMLR_SER_ERR_ARG;
     }
@@ -937,7 +929,7 @@ static int read_mix_body(reader_t *r, evmlr_voting_mix_struct *mix, const evmlr_
     if (r->err) {
         return r->err;
     }
-    if (k != (uint64_t) pp->k || j >= k || n_in > MAX_MESSAGES || n_rej > n_in || n_in - n_rej == 1) {
+    if (k != (uint64_t) pp->k || j >= k || n_in > MAX_MESSAGES || n_rej > n_in) {
         return r->err = EVMLR_SER_ERR_SHAPE;
     }
     if (n_rej > r->left / 5) {
@@ -977,11 +969,11 @@ static int read_mix_body(reader_t *r, evmlr_voting_mix_struct *mix, const evmlr_
     if (mix->N == 0) {
         return EVMLR_SER_OK;
     }
-    if (shuffle_polys((uint64_t) mix->N, (uint64_t) pp->L_max) > r->left / 2) {
+    if (shuffle_polys((uint64_t) evmlr_voting_shuffle_len(mix->N), (uint64_t) pp->L_max) > r->left / 2) {
         mix->N = 0;
         return r->err = EVMLR_SER_ERR_TRUNCATED;
     }
-    shape_ctx(&shape, mix->N, pp->L_max);
+    shape_ctx(&shape, evmlr_voting_shuffle_len(mix->N), pp->L_max);
     if (read_statement(r, mix->statement, &shape)) {
         mix->N = 0;
         return r->err;
@@ -1094,18 +1086,7 @@ static int verify_outer_layer(const evmlr_voting_submission_t sub, const evmlr_v
     nmod_poly_mat_set(cipher->otse_cipher->c, sub->ballot->layer->otse_cipher->c);
     nmod_poly_mat_init(msg, pp->L_max, 1, MOD_Q);
     evmlr_hpke_decrypt(msg, cipher, sk->sks[0], pp->hpke_ctx);
-    /* GCC >= 11 at -O2 reports a 128-byte read from a 40-byte region here
-     * (-Wstringop-overread); the argument is the 128-byte layer, and the
-     * test is clean under AddressSanitizer. A false positive of its
-     * array-parameter analysis. */
-#if defined(__GNUC__) && !defined(__clang__)
-#pragma GCC diagnostic push
-#pragma GCC diagnostic ignored "-Wstringop-overread"
-#endif
-    ok = evmlr_voting_verify_enc(pp, sub->proofs[0], sub->ballot->layer, msg, 0, sub->voter_id);
-#if defined(__GNUC__) && !defined(__clang__)
-#pragma GCC diagnostic pop
-#endif
+    ok = evmlr_voting_verify_ballot(pp, sub, msg);
     nmod_poly_mat_clear(msg);
     evmlr_hpke_cipher_clear(cipher);
     return ok;
